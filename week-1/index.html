@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shared Minds - Week 1: Wake Up</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.6.0/p5.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/0.6.0/addons/p5.dom.min.js"></script>
+    <script src="https://unpkg.com/ml5@1/dist/ml5.js"></script>
+    <link rel="stylesheet" href="index.css" />
+  </head>
+
+  <body>
+    <video id="webcam" autoplay playsinline></video>
+
+    <div id="overlay"></div>
+    <div id="instruction">
+      <p>
+        you <span style="color: violet">materialize</span> as you
+        <span style="opacity: 0.4">close</span> your eyes
+      </p>
+    </div>
+    <div id="mask"></div>
+
+    <script src="arduino.js"></script>
+    <script src="index.js"></script>
+    <script src="sketch.js"></script>
+  </body>
+</html>
