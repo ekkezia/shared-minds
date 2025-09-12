@@ -105,9 +105,11 @@ async function handleGenerate() {
     return;
   }
   saveToken(token);
+  document.getElementById('thought-output').style.cursor = 'wait';
   document.getElementById('thought-output').textContent = 'Generating…';
   const thought = await generateTrainOfThought(currentTitles, token);
   document.getElementById('thought-output').textContent = thought;
+  document.getElementById('thought-output').cursor = 'default';
   chrome.storage.local.set({
     lastCapture: { timestamp: Date.now(), titles: currentTitles, thought },
   });
