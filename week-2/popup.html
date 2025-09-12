@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tab Titles</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Train of Thoughts</h1>
+      <button id="refresh" title="Refresh list">↻</button>
+    </header>
+    <section id="status" class="muted">Loading…</section>
+    <ul id="tab-list"></ul>
+    <section id="generator-controls">
+      <h2>Generation</h2>
+      <label
+        for="auth-token"
+        style="display: block; font-size: 12px; margin-bottom: 4px"
+        >Auth Token (stored locally)</label
+      >
+      <input
+        id="auth-token"
+        type="password"
+        placeholder="Paste token"
+        autocomplete="off"
+        style="width: 100%; box-sizing: border-box; margin-bottom: 6px"
+      />
+      <button id="generate" style="width: 100%">Generate Story</button>
+    </section>
+    <section id="thoughts">
+      <h2>Maybe this is what you have been thinking...!</h2>
+      <pre id="thought-output" class="code-block">(Not generated yet)</pre>
+    </section>
+    <footer>
+      <small>Captured <span id="count">0</span> tabs • v0.1.0</small>
+    </footer>
+    <script src="popup.js"></script>
+  </body>
+</html>

@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "Train of Tabs",
+  "description": "Logs all open tab titles when the extension popup is opened; scaffold for train-of-thought material.",
+  "version": "0.1.0",
+  "action": {
+    "default_title": "Tab Titles",
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+    "tabs",
+    "storage",
+    "scripting",
+    "activeTab"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+body {
+  font-family: system-ui, Arial, sans-serif;
+  margin: 0;
+  padding: 0.75rem;
+  min-width: 340px;
+  background: #0f1115;
+  color: #e6e6e6;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+h1 {
+  font-size: 1.05rem;
+  flex: 1;
+  margin: 0;
+  font-weight: 600;
+}
+button#refresh {
+  background: #1f6feb;
+  border: none;
+  color: white;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.9rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+button#refresh:hover { background: #2b79f3; }
+ul#tab-list {
+  list-style: decimal;
+  padding-left: 1.25rem;
+  margin: 0 0 0.75rem 0;
+  max-height: 180px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+ul#tab-list li { margin-bottom: 0.25rem; }
+footer { margin-top: 0.75rem; opacity: 0.65; }
+section#thoughts { margin-top: 0.5rem; }
+section#thoughts h2 { font-size: 0.9rem; margin: 0 0 0.25rem 0; opacity: 0.8; }
+.code-block {
+  background: #1e232b;
+  border: 1px solid #2d3845;
+  padding: 0.5rem;
+  font-size: 0.7rem;
+  max-height: 140px;
+  overflow: auto;
+  border-radius: 4px;
+  line-height: 1.2;
+  white-space: pre-wrap;
+}
+.muted { opacity: 0.6; font-size: 0.75rem; margin-bottom: 0.4rem; }
