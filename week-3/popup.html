@@ -8,13 +8,12 @@
   </head>
   <body>
     <header>
-      <h1>🚂 Tabs of Thoughts</h1>
+      <h1>🚂 Thoughts of Tabs</h1>
       <button id="refresh" title="Refresh list">↻</button>
     </header>
     <section id="status" class="muted">Loading…</section>
-    <ul id="tab-list"></ul>
     <section id="generator-controls">
-      <h2>Generate your thoughts ⬇</h2>
+      <h2>Step 1. Auth Tokens.</h2>
       <label
         for="auth-token"
         style="display: block; font-size: 12px; margin-bottom: 4px"
@@ -30,12 +29,46 @@
         autocomplete="off"
         style="width: 100%; box-sizing: border-box; margin-bottom: 6px"
       />
-      <button id="generate" style="width: 100%">Generate Story</button>
     </section>
+
+    <section id="ai-enhancement">
+      <h2>Step 2. Type your story.</h2>
+      <textarea
+        id="story-input"
+        placeholder="Type your story here..."
+        style="
+          width: 100%;
+          box-sizing: border-box;
+          margin-bottom: 6px;
+          min-height: 80px;
+          resize: vertical;
+        "
+      ></textarea>
+      <button id="send-to-ai" style="width: 100%">Send Story to AI</button>
+      <p>AI thinks these websites can tell your story:</p>
+      <div
+        id="ai-result"
+        style="
+          margin-top: 10px;
+          padding: 8px;
+          border: 1px solid #ccc;
+          border-radius: 4px;
+          background: #f9f9f9;
+          min-height: 40px;
+          white-space: pre-wrap;
+        "
+      >
+        (...)
+      </div>
+    </section>
+
+    <ul id="tab-list"></ul>
+
     <section id="thoughts">
-      <h2>Maybe this is what you have been thinking...!</h2>
+      <h2>Step 3. Surprise!</h2>
       <pre id="thought-output" class="code-block">(Not generated yet)</pre>
     </section>
+
     <footer>
       <small>Captured <span id="count">0</span> tabs • v0.1.0</small>
     </footer>
