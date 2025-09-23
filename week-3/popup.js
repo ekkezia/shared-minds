@@ -184,7 +184,7 @@ async function askForSound(p_prompt) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${REPLICATE_API_TOKEN}`,
+      Authorization: `Bearer r8_YH0yuJwvhhMKwnQ2jo0HwOh0e4goCrn4TM6u2`,
     },
     body: JSON.stringify(data),
   };
@@ -378,40 +378,120 @@ async function handleSendToAI() {
     '🤖 AI is finding related websites...';
   const result = await sendStoryToAI(storyInput, token);
 
-  // Convert result to string and process for array creation
+  // Convert result to string/array and build a normalized website array
   let displayText = '';
   let websiteArray = [];
 
-  if (typeof result === 'object' && result.result) {
-    if (Array.isArray(result.result)) {
-      websiteArray = result.result;
-    } else if (typeof result.result === 'string') {
-      // Handle comma-separated string format
-      websiteArray = result.result.split(',').map((url) => url.trim());
+  console.log('Raw AI result:', result);
+
+  // helper: extract URLs/domains from arbitrary text
+  function extractUrlsFromText(text) {
+    if (!text || typeof text !== 'string') return [];
+    const urls = [];
+    // first try explicit http(s) urls
+    const urlPattern = /(https?:\/\/[^\s,;"']+)/g;
+    const matches = text.match(urlPattern);
+    if (matches) urls.push(...matches.map((s) => s.trim()));
+
+    // fallback: capture domain-like tokens (example.com/path)
+    if (urls.length === 0) {
+      const domainPattern =
+        /(?:www\.)?[a-z0-9.-]+\.[a-z]{2,6}(?:\/[\w\-._~:\/?#\[\]@!$&'()*+,;=%]*)?/gi;
+      const domMatches = text.match(domainPattern);
+      if (domMatches) urls.push(...domMatches.map((s) => s.trim()));
     }
 
-    displayText = `Story: "${
-      result.story
-    }"\n\nWebsites found:\n${websiteArray.join(', ')}`;
-
-    // Store the array in a variable you can use elsewhere
-    window.aiGeneratedWebsites = websiteArray;
-    console.log('AI Generated Websites Array:', websiteArray);
-  } else if (typeof result === 'string') {
-    // If result is just a string, try to extract URLs
-    const urlPattern = /(https?:\/\/[^\s,]+)/g;
-    const matches = result.match(urlPattern);
-    if (matches) {
-      websiteArray = matches.map((url) => url.trim());
-      window.aiGeneratedWebsites = websiteArray;
-      console.log('Extracted URLs from string:', websiteArray);
-    }
-    displayText = result;
-  } else if (typeof result === 'object') {
-    displayText = JSON.stringify(result, null, 2);
-  } else {
-    displayText = result;
+    // final cleanup: remove empty, de-dupe
+    return Array.from(new Set(urls.filter(Boolean)));
   }
+
+  // If API returned a JSON-string, try parsing it
+  let parsed = result;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch (e) {
+      // not JSON — keep as string
+    }
+  }
+
+  // Handle several possible shapes
+  if (Array.isArray(parsed)) {
+    // array could be list of urls or a char array
+    if (parsed.every((it) => typeof it === 'string' && it.length <= 3)) {
+      // probably char array
+      const joined = parsed.join('');
+      websiteArray = extractUrlsFromText(joined);
+      displayText = joined;
+    } else {
+      // array of strings
+      websiteArray = parsed.map((s) => String(s).trim()).filter(Boolean);
+      displayText = websiteArray.join(', ');
+    }
+  } else if (parsed && typeof parsed === 'object') {
+    // common fields that may contain URLs
+    const candidate =
+      parsed.result ??
+      parsed.output ??
+      parsed.urls ??
+      parsed.websites ??
+      parsed;
+    if (Array.isArray(candidate)) {
+      websiteArray = candidate.map((s) => String(s).trim()).filter(Boolean);
+      displayText = JSON.stringify(candidate, null, 2);
+    } else if (typeof candidate === 'string') {
+      // comma/newline separated or raw text
+      websiteArray = candidate
+        .split(/[,\n]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      // if splitting produced no real domains, try regex extraction
+      if (websiteArray.length === 0)
+        websiteArray = extractUrlsFromText(candidate);
+      displayText = candidate;
+    } else {
+      // stringify whole object and try to extract
+      const asText = JSON.stringify(parsed, null, 2);
+      websiteArray = extractUrlsFromText(asText);
+      displayText = asText;
+    }
+  } else if (typeof parsed === 'string') {
+    // plain string — try splitting and regex extraction
+    websiteArray = parsed
+      .split(/[,\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (websiteArray.length === 0) websiteArray = extractUrlsFromText(parsed);
+    displayText = parsed;
+  }
+
+  // Final normalization: remove duplicates, ensure strings
+  websiteArray = Array.from(
+    new Set((websiteArray || []).map((s) => String(s).trim()).filter(Boolean)),
+  );
+
+  // If entries look like short words without dots, remove them
+  websiteArray = websiteArray.filter((s) => s.length > 3);
+
+  // If we still have no URLs but displayText contains URLs, try a last extraction
+  if (websiteArray.length === 0)
+    websiteArray = extractUrlsFromText(String(displayText));
+
+  // Expose for debugging and other code
+  window.aiGeneratedWebsites = websiteArray;
+  console.log('Normalized AI websites array:', websiteArray);
+
+  // Prepare a user-friendly display
+  if (websiteArray.length > 0) {
+    displayText = `Websites found:\n${websiteArray.join(', ')}`;
+  } else if (displayText) {
+    // keep whatever the AI returned for inspection
+    displayText = String(displayText).slice(0, 2000);
+  } else {
+    displayText = 'No websites found in AI response.';
+  }
+
+  document.getElementById('ai-result').textContent = displayText;
 
   document.getElementById('ai-result').textContent = displayText;
 
