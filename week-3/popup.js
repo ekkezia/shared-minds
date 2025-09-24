@@ -184,7 +184,7 @@ async function askForSound(p_prompt) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer r8_YH0yuJwvhhMKwnQ2jo0HwOh0e4goCrn4TM6u2`,
+      Authorization: `Bearer ${process.env.REPLICATE_API_KEY}`,
     },
     body: JSON.stringify(data),
   };
