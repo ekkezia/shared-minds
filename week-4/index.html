@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Replicate Token & Image Upload</title>
+    <style>
+      body {
+        font-family: monospace;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+      }
+      .row {
+        margin-bottom: 12px;
+      }
+      input[type='text'],
+      input[type='password'] {
+        width: 320px;
+        padding: 8px;
+      }
+      button {
+        padding: 8px 12px;
+        margin-left: 8px;
+      }
+      #preview {
+        max-width: 480px;
+        display: none;
+        margin-top: 12px;
+      }
+      .token-display {
+        font-size: 13px;
+        color: #333;
+        margin-top: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Ordering Images in Image</h2>
+
+    <div class="row">
+      <label>API Token</label><br />
+      <input
+        id="tokenInput"
+        type="password"
+        placeholder="Enter Replicate API token"
+      />
+      <button id="saveToken">Save Token</button>
+      <button id="clearToken">Clear Token</button>
+      <div id="tokenStatus" class="token-display"></div>
+    </div>
+
+    <div class="row">
+      <label>Upload Image</label><br />
+      <input id="imageInput" type="file" accept="image/*" />
+      <img id="preview" src="" alt="preview" />
+    </div>
+
+    <div class="row">
+      <canvas
+        id="overlayCanvas"
+        width="640"
+        height="480"
+        style="border: 1px solid #ddd; display: none; margin-top: 12px"
+      ></canvas>
+      <div id="detectionResults" style="margin-top: 12px"></div>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>
