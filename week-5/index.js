@@ -30,8 +30,8 @@ const firebaseConfig = {
 let firebaseApp = null;
 let database = null;
 let imageCache = new Map();
-let lightbox = null;
 let currentImages = [];
+let currentImgIdx = -1;
 
 // Utility functions
 const $ = (id) => document.getElementById(id);
@@ -143,7 +143,6 @@ async function loadTimeline() {
       .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
     renderTimeline();
-    initPhotoSwipe();
   } catch (error) {
     console.error('Error loading timeline:', error);
     showStatus('Error loading timeline: ' + error.message, 'error');
@@ -192,6 +191,48 @@ function renderTimeline() {
 
   // Re-attach event listeners after DOM update
   attachUploadListeners();
+
+  // Logic to click the image and open in #viewer
+  const imageItems = document.querySelectorAll('.image-item');
+  imageItems.forEach((item) => {
+    item.addEventListener('click', () => {
+      const index = item.getAttribute('data-index');
+      const imgData = currentImages[index];
+      if (imgData) {
+        // update the currentImgIdx
+        currentImgIdx = imgData.idx;
+        console.log('🔔 Clicked image index:', currentImgIdx);
+
+        renderImageInViewer(imgData);
+      }
+    });
+  });
+}
+
+// #viewer div render function
+const img = $('mainImage');
+const bbox = $('bbox');
+function renderImageInViewer(imgData) {
+  // load image
+  img.src = imgData.dataURL;
+
+  // update current image
+  currentImgIdx = imgData.idx;
+
+  // if placement exists, draw bbox
+  if (imgData.placement) {
+    const p = imgData.placement;
+    bbox.style.display = 'block';
+    bbox.style.left = p.x + '%';
+    bbox.style.top = p.y + '%';
+    bbox.style.width = p.width + '%';
+    bbox.style.height = p.height + '%';
+  } else {
+    bbox.style.display = 'none'; // no placement, hide bbox
+  }
+
+  // reset zoom
+  img.style.transform = 'scale(1)';
 }
 
 // Function to attach upload listeners (since DOM elements are recreated)
@@ -237,48 +278,6 @@ function attachUploadListeners() {
       fileInput,
     });
   }
-}
-
-// Initialize PhotoSwipe for image zoom/navigation
-function initPhotoSwipe() {
-  if (lightbox) {
-    lightbox.destroy();
-  }
-
-  if (currentImages.length === 0) return;
-
-  const items = currentImages.map((img) => ({
-    src: img.dataURL,
-    width: img.width || 2048,
-    height: img.height || 2048,
-    alt: `Image ${currentImages.indexOf(img) + 1}`,
-  }));
-
-  lightbox = new PhotoSwipeLightbox({
-    gallery: '#timeline',
-    children: '.image-item',
-    pswpModule: PhotoSwipe,
-    dataSource: items,
-  });
-
-  // Navigate to next image when zoomed close
-  lightbox.on('afterInit', () => {
-    lightbox.pswp.on('zoomPanUpdate', (e) => {
-      if (
-        lightbox.pswp.currSlide.zoomLevels.initial <
-        lightbox.pswp.currSlide.currZoomLevel * 2
-      ) {
-        // Very zoomed in, advance to next image after short delay
-        setTimeout(() => {
-          if (lightbox.pswp.currIndex < currentImages.length - 1) {
-            lightbox.pswp.next();
-          }
-        }, 1000);
-      }
-    });
-  });
-
-  lightbox.init();
 }
 
 // Call Replicate model
@@ -336,7 +335,7 @@ async function processWithSeedream(token, newImageDataURL, lastImageDataURL) {
   throw new Error('No output generated from Seedream-4 model');
 }
 
-// Save image data to Firebase Realtime Database
+// STEP 2: Save image data to Firebase Realtime Database
 async function saveImageToDatabase(imageData) {
   const imagesRef = ref(database, 'images');
   const newImageRef = push(imagesRef);
@@ -377,6 +376,11 @@ async function handleImageUpload() {
     return;
   }
 
+  let finalDataURL;
+  let isGenerated;
+  let originalDataURL;
+  let placement;
+
   try {
     showLoading();
     showStatus('Processing image...', 'success');
@@ -385,11 +389,11 @@ async function handleImageUpload() {
 
     // Convert file to base64 data URL
     console.log('Converting image to base64...');
-    const originalDataURL = await fileToDataURL(file);
+    originalDataURL = await fileToDataURL(file);
     console.log('Base64 conversion complete');
 
-    let finalDataURL = originalDataURL;
-    let isGenerated = false;
+    finalDataURL = originalDataURL;
+    isGenerated = false;
 
     // If this is not the first image, process with Seedream-4
     if (currentImages.length > 0) {
@@ -412,7 +416,26 @@ async function handleImageUpload() {
         finalDataURL = await urlToDataURL(generatedUrl);
         isGenerated = true;
 
-        console.log('Generated image converted to base64');
+        console.log('🌙 [SEEDREAM] Generated image converted to base64!');
+
+        // STEP 3: analyze image difference to find the new object estimated location / bbox
+        placement = await analyzeImagePlacement(
+          token,
+          lastImage.dataURL,
+          finalDataURL,
+          originalDataURL,
+        );
+        console.log('🎆 Image placement analysis:', placement);
+
+        // STEP 4: put the image on the viewer with bbox
+        // if (placement) {
+        //   drawBBox(finalDataURL, placement);
+        // } else {
+        //   console.warn('No placement data received, skipping bbox drawing');
+        // }
+
+        // break workflow if no final data URL of converted image found and the db already have images
+        if (!finalDataURL && currentImages.length !== 0) return;
       } catch (error) {
         console.error('Seedream processing error:', error);
         showStatus(
@@ -422,13 +445,12 @@ async function handleImageUpload() {
       }
     }
 
-    // break workflow if no final data URL of converted image found and the db already have images
-    if (!finalDataURL && currentImages.length !== 0) return;
-
-    // Save to database
+    // STEP 5: Save to database
     const imageData = {
+      idx: currentImages.length === 0 ? 0 : currentImages.length,
       dataURL: finalDataURL,
       originalDataURL: originalDataURL,
+      placement: placement || null,
       timestamp: timestamp,
       isGenerated: isGenerated,
       width: 2048,
@@ -452,21 +474,197 @@ async function handleImageUpload() {
 
     // Re-render timeline
     renderTimeline();
-    initPhotoSwipe();
 
     // Clear input
     fileInput.value = '';
 
     hideLoading();
-    showStatus(
-      `Image ${isGenerated ? 'processed and ' : ''}uploaded successfully!`,
-    );
   } catch (error) {
     console.error('Upload error:', error);
     hideLoading();
     showStatus('Upload failed: ' + error.message, 'error');
   }
 }
+
+// STEP 3: analyze image difference to find the new object estimated location / bbox
+// Function to analyze image placement using GPT-4V
+async function analyzeImagePlacement(
+  token,
+  beforeImageDataURL,
+  afterImageDataURL,
+  originalImageDataURL,
+) {
+  console.log('🔍 Starting image placement analysis...');
+
+  const prompt = `
+      I have 3 images:
+    1. BEFORE or the first image in the image_input array: The original composite image
+    2. AFTER or the second image in the image_input array: The result after inserting the new image into the original
+    3. THE SUBMITTED IMAGE INPUT or the third image in the image_input array:  a new image that was added with an object to be inserted into the BEFORE image in order to generate the AFTER image.
+
+    Please analyze where the objects in the new image was placed in the final result. Return ONLY a JSON object with the bounding box coordinates as percentages (0-100) of the image dimensions:
+
+    {
+      "placement": {
+        "x": number (left edge as % from left),
+        "y": number (top edge as % from top), 
+        "width": number (width as % of total width),
+        "height": number (height as % of total height),
+        "centerX": number (center X as % from left),
+        "centerY": number (center Y as % from top),
+        "description": "brief description of where it was placed",
+        "confidence": number (0-1, how confident you are)
+      }
+    }
+  `;
+  try {
+    const response = await fetch(REPLICATE_PROXY, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        model: 'openai/gpt-5',
+        input: {
+          prompt: prompt,
+          image_input: [
+            beforeImageDataURL,
+            afterImageDataURL,
+            originalImageDataURL,
+          ],
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ OpenAI API error:', {
+        status: response.status,
+        statusText: response.statusText,
+        errorText: errorText,
+      });
+      throw new Error(`OpenAI API error: ${response.status} - ${errorText}`);
+    }
+
+    const result = await response.json();
+    const output = result.output.join('\n');
+
+    // Extract the output text
+    let outputText = '';
+    if (result.output && Array.isArray(result.output)) {
+      outputText = result.output.join('\n');
+    } else if (result.output && typeof result.output === 'string') {
+      outputText = result.output;
+    } else {
+      console.error('❌ Unexpected result structure:', result);
+      return null;
+    }
+
+    console.log('🔍 Raw output text:', outputText);
+
+    // Clean up the spaced-out text by removing extra spaces between characters
+    const cleanedText = outputText
+      .replace(/\s+/g, ' ') // Replace multiple spaces with single space
+      .replace(/"\s+"/g, '""') // Fix spaced quotes
+      .replace(/:\s+/g, ':') // Remove spaces after colons
+      .replace(/,\s+/g, ',') // Remove spaces after commas
+      .replace(/{\s+/g, '{') // Remove spaces after opening braces
+      .replace(/\s+}/g, '}') // Remove spaces before closing braces
+      .replace(/\[\s+/g, '[') // Remove spaces after opening brackets
+      .replace(/\s+\]/g, ']') // Remove spaces before closing brackets
+      .trim();
+
+    console.log('🧹 Cleaned text:', cleanedText);
+
+    // Try to extract JSON from the cleaned text
+    let jsonText = cleanedText;
+
+    // Look for JSON object in the text
+    const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      jsonText = jsonMatch[0];
+    }
+
+    console.log('📝 Extracted JSON text:', jsonText);
+
+    // Parse the JSON
+    let placementData;
+    try {
+      placementData = JSON.parse(jsonText);
+      console.log('✅ Successfully parsed placement data:', placementData);
+    } catch (parseError) {
+      console.error('❌ Error parsing JSON:', parseError);
+      console.error('Text that failed to parse:', jsonText);
+
+      // Try alternative parsing approach - remove all spaces between characters
+      try {
+        const alternativeText = outputText.replace(/\s/g, '');
+        console.log('🔄 Trying alternative parsing:', alternativeText);
+        placementData = JSON.parse(alternativeText);
+        console.log('✅ Alternative parsing successful:', placementData);
+      } catch (altError) {
+        console.error('❌ Alternative parsing also failed:', altError);
+        return null;
+      }
+    }
+
+    // Validate the structure
+    if (!placementData || !placementData.placement) {
+      console.error('❌ Invalid placement data structure:', placementData);
+      return null;
+    }
+
+    console.log('🎯 Final placement result:', placementData.placement);
+
+    // update
+    return placementData.placement;
+  } catch (error) {
+    console.error('Error analyzing placement with model:', error);
+    return null;
+  }
+}
+
+// Zoom handling
+let virtualScroll = 0; // your "scroll position"
+window.addEventListener(
+  'wheel',
+  (e) => {
+    e.preventDefault(); // prevent default scrolling
+
+    if (currentImgIdx < 0 || currentImgIdx >= currentImages.length) return;
+
+    // deltaY tells you the scroll direction and amount
+    virtualScroll += e.deltaY;
+
+    // optional: clamp to a min/max
+    virtualScroll = Math.max(0, virtualScroll);
+
+    // zoom on image!
+    if (!currentImages[currentImgIdx].placement) return;
+
+    img.style.transform = `scale(${1 + virtualScroll * 0.001})`;
+    img.style.transformOrigin =
+      currentImages[currentImgIdx].placement.centerX +
+      '% ' +
+      currentImages[currentImgIdx].placement.centerY +
+      '%';
+
+    // if user delta scroll reached a certain threshold, move the img src to the prev img
+    let prevImg = currentImages[currentImgIdx - 1];
+
+    if (prevImg === undefined || prevImg.idx < 0) return;
+
+    if (Math.abs(e.deltaY) > 100) {
+      // move to prev img
+      img.src = prevImg.dataURL;
+      // reset scale
+      img.style.transform = 'scale(1)';
+      virtualScroll = 0;
+    }
+  },
+  { passive: false },
+);
 
 // Timeline cursor effect
 document.addEventListener('mousemove', (e) => {
