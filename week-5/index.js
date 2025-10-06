@@ -199,40 +199,59 @@ function renderTimeline() {
       const index = item.getAttribute('data-index');
       const imgData = currentImages[index];
       if (imgData) {
-        // update the currentImgIdx
-        currentImgIdx = imgData.idx;
+        // use the timeline index
+        currentImgIdx = Number(index);
         console.log('🔔 Clicked image index:', currentImgIdx);
 
-        renderImageInViewer(imgData);
+        renderImageInViewer(imgData, index);
+      }
+    });
+
+    // Hover
+    item.addEventListener('mouseover', async () => {
+      const index = item.getAttribute('data-index');
+      const imgData = currentImages[index];
+      if (imgData) {
+        currentImgIdx = Number(index);
+        renderImageInViewer(imgData, index);
       }
     });
   });
 }
 
 // #viewer div render function
-const img = $('mainImage');
-const bbox = $('bbox');
-function renderImageInViewer(imgData) {
-  // load image
-  img.src = imgData.dataURL;
+function renderImageInViewer(imgData, index) {
+  const imgEl = $('mainImage');
+  const bboxEl = $('bbox');
+  if (!imgEl) {
+    console.error('mainImage element not found');
+    return;
+  }
 
-  // update current image
-  currentImgIdx = imgData.idx;
+  // display
+  imgEl.style.display = 'block';
+
+  // load image
+  imgEl.src = imgData.dataURL;
+
+  // update current image index (use timeline index)
+  currentImgIdx =
+    typeof index !== 'undefined' ? Number(index) : imgData.idx || 0;
 
   // if placement exists, draw bbox
-  if (imgData.placement) {
+  if (bboxEl && imgData.placement) {
     const p = imgData.placement;
-    bbox.style.display = 'block';
-    bbox.style.left = p.x + '%';
-    bbox.style.top = p.y + '%';
-    bbox.style.width = p.width + '%';
-    bbox.style.height = p.height + '%';
-  } else {
-    bbox.style.display = 'none'; // no placement, hide bbox
+    bboxEl.style.display = 'block';
+    bboxEl.style.left = p.x + '%';
+    bboxEl.style.top = p.y + '%';
+    bboxEl.style.width = p.width + '%';
+    bboxEl.style.height = p.height + '%';
+  } else if (bboxEl) {
+    bboxEl.style.display = 'none';
   }
 
   // reset zoom
-  img.style.transform = 'scale(1)';
+  imgEl.style.transform = 'scale(1)';
 }
 
 // Function to attach upload listeners (since DOM elements are recreated)
@@ -314,7 +333,7 @@ async function processWithSeedream(token, newImageDataURL, lastImageDataURL) {
     width: 2048,
     height: 2048,
     prompt:
-      "insert seamlessly the second image within or inside the first image. you're free to put it anywhere and as part of any object that makes most sense with the environment of the first image.",
+      'Insert seamlessly the second image in the array inside the first image in the array by placing it in a way that is seamless to the environment. However, try not to make the second object be overlapping the first object and so on.',
     max_images: 4,
     image_input: [lastImageDataURL, newImageDataURL],
     aspect_ratio: '4:3',
@@ -497,12 +516,11 @@ async function analyzeImagePlacement(
   console.log('🔍 Starting image placement analysis...');
 
   const prompt = `
-      I have 3 images:
-    1. BEFORE or the first image in the image_input array: The original composite image
-    2. AFTER or the second image in the image_input array: The result after inserting the new image into the original
-    3. THE SUBMITTED IMAGE INPUT or the third image in the image_input array:  a new image that was added with an object to be inserted into the BEFORE image in order to generate the AFTER image.
+      I have 2 images:
+    1. AFTER or the second image in the image_input array: The result after inserting the new image into the original composite image.
+    2. The BEFORE object or the first image in the image_input array to be searched that was submitted from wikipedia result prior to the current image generation.
 
-    Please analyze where the objects in the new image was placed in the final result. Return ONLY a JSON object with the bounding box coordinates as percentages (0-100) of the image dimensions:
+    Please analyze where the object to be searched (which is the second image in the image_input array) is at within the AFTER image (which is the first image in the image_input array). Return ONLY a JSON object with the bounding box coordinates as percentages (0-100) of the image dimensions:
 
     {
       "placement": {
@@ -626,12 +644,16 @@ async function analyzeImagePlacement(
 }
 
 // Zoom handling
+const img = $('mainImage');
 let virtualScroll = 0; // your "scroll position"
+let zoomLocked = false; // ✅ new flag to prevent rapid zooms
+
 window.addEventListener(
   'wheel',
   (e) => {
     e.preventDefault(); // prevent default scrolling
 
+    if (zoomLocked) return; // ✅ skip if we're in cooldown
     if (currentImgIdx < 0 || currentImgIdx >= currentImages.length) return;
 
     // deltaY tells you the scroll direction and amount
@@ -640,7 +662,7 @@ window.addEventListener(
     // optional: clamp to a min/max
     virtualScroll = Math.max(0, virtualScroll);
 
-    // zoom on image!
+    // zoom on image
     if (!currentImages[currentImgIdx].placement) return;
 
     img.style.transform = `scale(${1 + virtualScroll * 0.001})`;
@@ -651,16 +673,21 @@ window.addEventListener(
       '%';
 
     // if user delta scroll reached a certain threshold, move the img src to the prev img
-    let prevImg = currentImages[currentImgIdx - 1];
-
-    if (prevImg === undefined || prevImg.idx < 0) return;
+    const prevImg = currentImages[currentImgIdx - 1];
+    if (!prevImg || prevImg.idx < 0) return;
 
     if (Math.abs(e.deltaY) > 100) {
+      virtualScroll = 0;
       // move to prev img
       img.src = prevImg.dataURL;
       // reset scale
       img.style.transform = 'scale(1)';
-      virtualScroll = 0;
+
+      // ✅ lock zoom for 500ms
+      zoomLocked = true;
+      setTimeout(() => {
+        zoomLocked = false;
+      }, 500);
     }
   },
   { passive: false },

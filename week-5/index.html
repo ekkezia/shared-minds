@@ -4,181 +4,236 @@
     <meta charset="utf-8" />
     <title>Week 5 - Image Timeline with Seedream-4</title>
     <style>
-            body {
-              font-family: monospace;
-              margin: 0;
-              background: #f5f5f5;
-            }
-            .container {
-              margin: 0 auto;
-            }
-            .controls {
-              padding: 20px;
-              margin-bottom: 20px;
-            }
-            .input-group {
-              margin-bottom: 15px;
-            }
-            label {
-              display: block;
-              margin-bottom: 5px;
-              font-weight: bold;
-            }
-            input,
-            button {
-              padding: 8px 12px;
-              border: 1px solid #ddd;
-              border-radius: 4px;
-            }
-            button {
-              background: #007bff;
-              color: white;
-              border: none;
-              cursor: pointer;
-            }
-            button:hover {
-              background: #0056b3;
-            }
-            button:disabled {
-              background: #6c757d;
-              cursor: not-allowed;
-            }
-            .timeline {
-              border-top: 1px dotted blue;
-              width: 100vw;
-              height: 200px;
-              position: fixed;
-              bottom: 0;
-              left: 0;
-              display: flex;
-              align-items: center;
-              justify-content: start;
-              overflow-x: auto;
-              white-space: nowrap;
-            }
-            .image-item {
-              cursor: pointer;
-              overflow: hidden;
-              transition: transform 0.2s;
-            }
-            .image-item:hover {
-              transform: translateY(-2px);
-            }
-            .image-item img {
-              width: 200px;
-              height: 150px;
-              object-fit: cover;
-              display: block;
-            }
-            .image-info {
-              padding: 8px;
-              background: #f8f9fa;
-              font-size: 12px;
-              color: #666;
-            }
-            .loading {
-              position: fixed;
-              top: 0;
-              left: 0;
-              right: 0;
-              bottom: 0;
-              background: rgba(0, 0, 0, 0.7);
-              display: none;
-              align-items: center;
-              justify-content: center;
-              z-index: 10000;
-            }
-            .spinner {
-              width: 50px;
-              height: 50px;
-              border: 5px solid #f3f3f3;
-              border-top: 5px solid #007bff;
-              border-radius: 50%;
-              animation: spin 1s linear infinite;
-            }
-            @keyframes spin {
-              0% {
-                transform: rotate(0deg);
-              }
-              100% {
-                transform: rotate(360deg);
-              }
-            }
-            .status {
-              margin-top: 10px;
-              padding: 10px;
-              border-radius: 4px;
-              display: none;
-            }
-            .status.success {
-              background: #d4edda;
-              color: #155724;
-              border: 1px solid #c3e6cb;
-            }
-            .status.error {
-              background: #f8d7da;
-              color: #721c24;
-              border: 1px solid #f5c6cb;
-            }
-            #uploadImage {
-              background-color: rgba(0, 0, 200, 0.8);
-              border-radius: 8px;
-              cursor: pointer;
-            }
-            .upload-next {
-              border: 1px dashed rgba(0, 0, 200, 0.5);
-              width: 200px;
-              height: 148px;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              transform: translateY(-15px);
-              cursor: pointer !important;
-            }
-            .upload-plus {
-              margin-left: 1rem;
-              font-size: 24px !important;
-              font-weight: bold !important;
-              background: transparent;
-              color: rgba(0, 0, 200, 1) !important;
-              border: none !important;
-              display: flex !important;
-              align-items: center !important;
-              justify-content: center !important;
-              transition: all 0.2s !important;
-              margin: 0 !important;
-              padding: 0 !important;
-              z-index: 1000;
-              position: relative;
-            }
-            .upload-plus:hover {
-              background: none;
-            }
-            .upload-next:hover {
-              background: #0056b3 !important;
-              .upload-plus {
-                color: white !important;
-                transform: scale(2) !important;
-              }
-            }
-
-            .upload-plus:disabled {
-              background: #6c757d !important;
-              cursor: not-allowed;
-              transform: none;
-            }
-
-            /* bbox drawer */
-      #viewer {
+      body,
+      button {
+        font-family: 'sans-serif' !important;
+        margin: 0;
+        background: transparent !important;
+        border-radius: 8px;
+        font-weight: 600 !important;
+        color: #36c !important;
+      }
+      input {
+        font-family: Georgia, 'Times New Roman', Times, serif;
+      }
+      h1 {
+        font-family: Georgia, 'Times New Roman', Times, serif;
+        color: grey;
+      }
+      label {
+        font-family: Georgia, 'Times New Roman', Times, serif;
+        color: black !important;
+      }
+      button:hover {
+        background: #a3d3ff !important;
+      }
+      .container {
+        margin: 0 auto;
+      }
+      .controls {
+        padding: 20px;
+        margin-bottom: 20px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: calc(100vh - 201px);
+      }
+      #tokenStatus {
+        font-size: 0.9rem;
+        color: #555;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 200px;
+        font-family: Georgia, 'Times New Roman', Times, serif;
+      }
+      .input-group {
+        display: flex;
         position: fixed;
         top: 0;
         left: 0;
-        width: 100vw;   /* or 100% if responsive */
+        width: 100vw;
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+      #saveContainer {
+        width: 300px;
+        display: flex;
+      }
+      #replicateToken {
+        width: 100%;
+        height: 1rem;
+      }
+      label {
+        display: block;
+        margin-bottom: 5px;
+        font-weight: bold;
+      }
+      label,
+      button {
+        padding: 8px 12px;
+        border-radius: 4px;
+      }
+      button {
+        background: #007bff;
+        color: white;
+        border: none;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #0056b3;
+      }
+      button:disabled {
+        background: #6c757d;
+        cursor: not-allowed;
+      }
+      .timeline {
+        border-top: 1px dotted blue;
+        width: 100vw;
+        height: 200px;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        display: flex;
+        align-items: center;
+        justify-content: start;
+        overflow-x: auto;
+        white-space: nowrap;
+        cursor: zoom-out;
+      }
+      .image-item {
+        width: 200px;
+        height: fit-content;
+        cursor: zoom-in;
+        overflow: hidden;
+        transition: transform 0.2s;
+        box-sizing: content-box;
+      }
+      .image-item:hover {
+        border: 2px dashed #36c;
+      }
+      .image-item img {
+        width: 200px;
+        height: 150px;
+        object-fit: cover;
+        display: block;
+      }
+      .image-info {
+        padding: 8px;
+        background: #f8f9fa;
+        font-size: 12px;
+        color: #666;
+        white-space: normal;
+        /* width: 100%; */
+      }
+      .loading {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 10000;
+      }
+      .spinner {
+        width: 50px;
+        height: 50px;
+        border: 5px solid #f3f3f3;
+        border-top: 5px solid #007bff;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+      .status {
+        margin-top: 10px;
+        padding: 10px;
+        border-radius: 4px;
+        display: none;
+      }
+      .status.success {
+        background: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+      }
+      .status.error {
+        background: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+      }
+      #uploadImage {
+        background-color: #36c;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .upload-next {
+        border: 1px dashed #36c;
+        width: 200px;
+        height: 148px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transform: translateY(-15px);
+        cursor: pointer !important;
+      }
+      .upload-plus {
+        margin-left: 1rem;
+        font-size: 24px !important;
+        font-weight: bold !important;
+        background: transparent;
+        color: #36c !important;
+        border: none !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        transition: all 0.2s !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        z-index: 1000;
+        position: relative;
+      }
+      .upload-plus:hover {
+        background: none;
+      }
+      .upload-next:hover {
+        background: #0056b3 !important;
+        .upload-plus {
+          color: white !important;
+          transform: scale(2) !important;
+        }
+      }
+
+      .upload-plus:disabled {
+        background: #6c757d !important;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      /* bbox drawer */
+      #viewer {
+        pointer-events: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw; /* or 100% if responsive */
         height: calc(100vh - 200px);
         overflow: hidden;
         margin: auto;
-        background: rgba(255,255,255,0.5);
-        backdrop-filter: blur(2px);
+        /* background: rgba(255,255,255,0.5);
+        backdrop-filter: blur(2px); */
+        cursor: zoom-in;
       }
       #mainImage {
         width: 100%;
@@ -189,11 +244,33 @@
       }
       #bbox {
         position: absolute;
-        border: 2px solid red;
         pointer-events: none;
+        /* border: 2px solid red; */
       }
-      js
-      Copy code
+      a {
+        text-decoration: none;
+      }
+      a:hover {
+        background: yellow;
+      }
+      #wikimedia-search {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 2.5rem;
+        gap: 1rem;
+      }
+      #searchKeyword {
+        width: 30vw;
+        font-size: 2.5rem;
+      }
+      #searchBtn {
+        font-size: 2.5rem;
+        padding: 0.5rem 1rem;
+      }
+      #mainImage {
+        display: none;
+      }
     </style>
   </head>
   <body>
@@ -202,7 +279,6 @@
         <h1>pipipip</h1>
 
         <div class="input-group">
-          <label for="replicateToken">Replicate API Token:</label>
           <input
             type="password"
             id="replicateToken"
@@ -226,6 +302,7 @@
     </div>
 
     <div id="viewer">
+      abc
       <img id="mainImage" src="yourImage.jpg" />
       <div id="bbox"></div>
     </div>
