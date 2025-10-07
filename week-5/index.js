@@ -154,6 +154,9 @@ function renderTimeline() {
   const timeline = $('timeline');
   console.log('Timeline element:', timeline); // Debug log
 
+  if (!timeline) return;
+
+  // ✅ Scroll to end after render
   if (currentImages.length === 0) {
     console.log('No images, showing upload interface'); // Debug log
     timeline.innerHTML = `
@@ -216,6 +219,11 @@ function renderTimeline() {
         renderImageInViewer(imgData, index);
       }
     });
+  });
+
+  // scroll to the end of timeline div
+  requestAnimationFrame(() => {
+    timeline.scrollLeft = timeline.scrollWidth;
   });
 }
 
@@ -646,6 +654,11 @@ window.addEventListener(
   'wheel',
   (e) => {
     e.preventDefault(); // prevent default scrolling
+
+    // ✅ skip zoom handling if the user is scrolling inside the .timeline
+    if (timelineEl && timelineEl.contains(e.target)) {
+      return;
+    }
 
     if (zoomLocked) return; // ✅ skip if we're in cooldown
     if (currentImgIdx < 0 || currentImgIdx >= currentImages.length) return;
