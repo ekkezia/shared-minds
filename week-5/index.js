@@ -333,7 +333,7 @@ async function processWithSeedream(token, newImageDataURL, lastImageDataURL) {
     width: 2048,
     height: 2048,
     prompt:
-      'Insert seamlessly the second image in the array inside the first image in the array by placing it in a way that is seamless to the environment. However, try not to make the second object be overlapping the first object and so on.',
+      'Insert seamlessly the first image in the array behind the second image in the array by placing it in a way that is seamless to the environment. The first image in the array should be like a background behind the first image, the second image should be larger and more prominent than the first image. However, the main object or character in the first image should not be obstructed too much by the second image. Try to not leave any room, fill out the whole space! ',
     max_images: 4,
     image_input: [lastImageDataURL, newImageDataURL],
     aspect_ratio: '4:3',
@@ -440,9 +440,8 @@ async function handleImageUpload() {
         // STEP 3: analyze image difference to find the new object estimated location / bbox
         placement = await analyzeImagePlacement(
           token,
-          lastImage.dataURL,
+          lastImage.originalDataURL,
           finalDataURL,
-          originalDataURL,
         );
         console.log('🎆 Image placement analysis:', placement);
 
@@ -509,18 +508,17 @@ async function handleImageUpload() {
 // Function to analyze image placement using GPT-4V
 async function analyzeImagePlacement(
   token,
-  beforeImageDataURL,
+  beforeImageMainCharDataURL, // the main character of the previous image, for example i just added a cat before the current image (even tho the previous image is a combination of cat and Monalisa)
   afterImageDataURL,
-  originalImageDataURL,
 ) {
   console.log('🔍 Starting image placement analysis...');
 
   const prompt = `
-      I have 2 images:
-    1. AFTER or the second image in the image_input array: The result after inserting the new image into the original composite image.
-    2. The BEFORE object or the first image in the image_input array to be searched that was submitted from wikipedia result prior to the current image generation.
+      I have 3 images:
+    1. The BEFORE object or the first image in the image_input array to be searched that was submitted from wikipedia result prior to the current image generation. 
+    2. AFTER or the second image in the image_input array: The result after inserting the new image into the original composite image.
 
-    Please analyze where the object to be searched (which is the second image in the image_input array) is at within the AFTER image (which is the first image in the image_input array). Return ONLY a JSON object with the bounding box coordinates as percentages (0-100) of the image dimensions:
+    Please analyze where the object to be searched (which is the third image in the image_input array) is located at within the AFTER image (which is the first image in the image_input array). Return ONLY a JSON object with the bounding box coordinates as percentages (0-100) of the image dimensions:
 
     {
       "placement": {
@@ -546,11 +544,7 @@ async function analyzeImagePlacement(
         model: 'openai/gpt-5',
         input: {
           prompt: prompt,
-          image_input: [
-            beforeImageDataURL,
-            afterImageDataURL,
-            originalImageDataURL,
-          ],
+          image_input: [beforeImageMainCharDataURL, afterImageDataURL],
         },
       }),
     });
@@ -672,14 +666,16 @@ window.addEventListener(
       currentImages[currentImgIdx].placement.centerY +
       '%';
 
-    // if user delta scroll reached a certain threshold, move the img src to the prev img
-    const prevImg = currentImages[currentImgIdx - 1];
-    if (!prevImg || prevImg.idx < 0) return;
+    // let prevImg;
+    // if (!prevImg || prevImg.idx < 0) return;
 
     if (Math.abs(e.deltaY) > 100) {
+      // if user delta scroll reached a certain threshold, move the img src to the prev img
+      if (currentImgIdx > 0) currentImgIdx -= 1;
+
       virtualScroll = 0;
       // move to prev img
-      img.src = prevImg.dataURL;
+      renderImageInViewer(currentImages[currentImgIdx], currentImgIdx);
       // reset scale
       img.style.transform = 'scale(1)';
 
