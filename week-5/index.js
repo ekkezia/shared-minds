@@ -653,8 +653,6 @@ const timeline = $('timeline');
 window.addEventListener(
   'wheel',
   (e) => {
-    e.preventDefault(); // prevent default scrolling
-
     // ✅ skip zoom handling if the user is scrolling inside the .timeline
     if (timeline && timeline.contains(e.target)) {
       return;
