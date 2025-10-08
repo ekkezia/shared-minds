@@ -649,14 +649,14 @@ async function analyzeImagePlacement(
 const img = $('mainImage');
 let virtualScroll = 0; // your "scroll position"
 let zoomLocked = false; // ✅ new flag to prevent rapid zooms
-
+const timeline = $('timeline');
 window.addEventListener(
   'wheel',
   (e) => {
     e.preventDefault(); // prevent default scrolling
 
     // ✅ skip zoom handling if the user is scrolling inside the .timeline
-    if (timelineEl && timelineEl.contains(e.target)) {
+    if (timeline && timeline.contains(e.target)) {
       return;
     }
 
