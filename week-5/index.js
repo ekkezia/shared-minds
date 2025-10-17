@@ -340,8 +340,15 @@ async function processWithSeedream(token, newImageDataURL, lastImageDataURL) {
     size: '2K',
     width: 2048,
     height: 2048,
-    prompt:
-      'Insert seamlessly the first image in the array behind the second image in the array by placing it in a way that is seamless to the environment. The first image in the array should be like a background behind the first image, the second image should be larger and more prominent than the first image. However, the main object or character in the first image should not be obstructed too much by the second image. Try to not leave any room, fill out the whole space! ',
+    prompt: `
+Create a Droste-style image where the first image in the array appears as a smaller poster within the second image in the array.
+Keep the entire composition and all objects of the second image exactly in the same place — do not rearrange or distort them.
+The second image should remain fully visible and unchanged, serving as the main background.
+Place the first image inside it as a smaller printed poster, painting, or framed image that looks naturally integrated into the scene.
+The first image should appear smaller and contained within the second image, preserving the perspective and lighting of the second image.
+Do not modify or move any subjects or elements of the second image — just overlay the first image inside it.
+Ensure the entire frame is filled with the second image, with the first image clearly visible inside it, like a poster within a poster.”
+    `,
     max_images: 4,
     image_input: [lastImageDataURL, newImageDataURL],
     aspect_ratio: '4:3',
@@ -425,6 +432,7 @@ async function handleImageUpload() {
     // If this is not the first image, process with Seedream-4
     if (currentImages.length > 0) {
       const lastImage = currentImages[currentImages.length - 1];
+      console.log('last image is', lastImage.dataURL);
       console.log('Processing with Seedream-4...');
 
       try {
@@ -435,7 +443,7 @@ async function handleImageUpload() {
         const generatedUrl = await processWithSeedream(
           token,
           originalDataURL,
-          lastImage.dataURL,
+          lastImage.dataURL, // previously generated image
         );
 
         // Convert the generated URL back to base64 for storage
@@ -474,7 +482,7 @@ async function handleImageUpload() {
     // STEP 5: Save to database
     const imageData = {
       idx: currentImages.length === 0 ? 0 : currentImages.length,
-      dataURL: finalDataURL,
+      dataURL: finalDataURL, // generated image
       originalDataURL: originalDataURL,
       placement: placement || null,
       timestamp: timestamp,
