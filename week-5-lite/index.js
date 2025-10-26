@@ -10,11 +10,6 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.4.0/firebase-database.js';
 
 // Constants
-const TOKEN_KEY = 'replicateApiToken';
-const REPLICATE_PROXY =
-  'https://itp-ima-replicate-proxy.web.app/api/create_n_get';
-const SEEDREAM_MODEL = 'bytedance/seedream-4';
-
 // Hardcoded Firebase config
 const firebaseConfig = {
   apiKey: 'AIzaSyB3NIp4zg94-XxVOUkdnl-w1oYZ_Qo32Lw',
@@ -68,19 +63,6 @@ function showStatus(message, type = 'success') {
   }, 3000);
 }
 
-function maskToken(token) {
-  if (!token) return '(none)';
-  if (token.length <= 8) return '*'.repeat(token.length);
-  return token.slice(0, 4) + '...' + token.slice(-4);
-}
-
-function renderTokenStatus() {
-  const token = localStorage.getItem(TOKEN_KEY);
-  const el = $('tokenStatus');
-  if (el)
-    el.textContent = token ? `Saved: ${maskToken(token)}` : 'No token saved';
-}
-
 // Convert file to base64 data URL
 function fileToDataURL(file) {
   return new Promise((resolve, reject) => {
@@ -89,23 +71,6 @@ function fileToDataURL(file) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
-}
-
-// Convert image URL to base64 (for external URLs from Replicate)
-async function urlToDataURL(url) {
-  try {
-    const response = await fetch(url);
-    const blob = await response.blob();
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  } catch (error) {
-    console.error('Error converting URL to data URL:', error);
-    return url;
-  }
 }
 
 // Initialize Firebase
@@ -246,36 +211,28 @@ function renderImageInViewer(imgData, index) {
   imgEl.style.transform = 'scale(1)';
 }
 
-// ✅ NEW: Process with Seedream after bbox is defined
-async function processSeedreamWithPlacement() {
+// ✅ NEW: Process with Canvas after bbox is defined
+async function processCanvasWithPlacement() {
   if (!pendingImageFile || !currentPlacement || !pendingOriginalDataURL) {
     console.error('Missing required data for processing');
     return;
   }
 
-  const token = localStorage.getItem(TOKEN_KEY);
-  if (!token) {
-    showStatus('Please save your Replicate API token first', 'error');
-    return;
-  }
-
   try {
     showLoading();
-    showStatus('Processing with Seedream-4...', 'success');
+    showStatus('Compositing images...', 'success');
 
     const lastImage = currentImages[currentImages.length - 1];
 
-    // Process with Seedream
-    const generatedUrl = await processWithSeedream(
-      token,
+    // Composite images using canvas
+    console.log('🎨 Compositing with canvas...');
+    const finalDataURL = await compositeImages(
       pendingOriginalDataURL,
       lastImage.dataURL,
+      currentPlacement,
     );
 
-    console.log('Converting generated image to base64...');
-    const finalDataURL = await urlToDataURL(generatedUrl);
-
-    console.log('🌙 [SEEDREAM] Generated image converted to base64!');
+    console.log('✅ Image composited successfully!');
 
     // Create image data with the placement we already defined
     const timestamp = new Date().toISOString();
@@ -318,9 +275,9 @@ async function processSeedreamWithPlacement() {
     hideLoading();
     showStatus('Upload completed successfully!', 'success');
   } catch (error) {
-    console.error('Seedream processing error:', error);
+    console.error('Canvas compositing error:', error);
     hideLoading();
-    showStatus('Processing failed: ' + error.message, 'error');
+    showStatus('Compositing failed: ' + error.message, 'error');
 
     // Reset state on error
     pendingImageFile = null;
@@ -345,8 +302,6 @@ function attachUploadListeners() {
 
     // Show preview in viewer
     fileInput.addEventListener('change', async (e) => {
-      bbox.style.display = 'block';
-
       const file = e.target.files[0];
       if (!file) return;
 
@@ -355,6 +310,7 @@ function attachUploadListeners() {
 
       // const imgEl = $('mainImage');
       const imgEl = $('add-image');
+      bbox.style.display = 'block';
       if (!imgEl) return;
 
       // Display new image in viewer
@@ -370,7 +326,7 @@ function attachUploadListeners() {
       // imgEl.style.left = '50%';
       // imgEl.style.transform = 'translateX(-50%)';
 
-      // Store pending file + data URL for Seedream processing
+      // Store pending file + data URL for Canvas processing
       pendingImageFile = file;
       pendingOriginalDataURL = newImageDataURL;
 
@@ -429,66 +385,69 @@ async function handleFirstImageUpload(file, dataURL) {
   }
 }
 
-// Call Replicate model
-async function callReplicateModel(token, modelVersion, inputObj) {
-  const response = await fetch(REPLICATE_PROXY, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      version: modelVersion,
-      input: inputObj,
-    }),
+// Canvas API
+async function compositeImages(baseDataURL, overlayDataURL, placement) {
+  return new Promise((resolve, reject) => {
+    const baseImg = new Image();
+    const overlayImg = new Image();
+
+    let baseLoaded = false;
+    let overlayLoaded = false;
+
+    const checkBothLoaded = () => {
+      if (baseLoaded && overlayLoaded) {
+        try {
+          // Create canvas with base image dimensions
+          const canvas = document.createElement('canvas');
+          canvas.width = baseImg.width;
+          canvas.height = baseImg.height;
+          const ctx = canvas.getContext('2d');
+
+          // Draw base image (backgroundx) at full size
+          ctx.drawImage(baseImg, 0, 0, baseImg.width, baseImg.height);
+
+          // Calculate overlay position and size based on base image dimensions
+          const x = (placement.x / 100) * baseImg.width;
+          const y = (placement.y / 100) * baseImg.height;
+          const w = (placement.width / 100) * baseImg.width;
+          const h = (placement.height / 100) * baseImg.height;
+
+          // Draw overlay image at specified position
+          ctx.drawImage(overlayImg, x, y, w, h);
+
+          // Convert to data URL
+          resolve(canvas.toDataURL('image/png'));
+        } catch (error) {
+          reject(error);
+        }
+      }
+    };
+
+    baseImg.onload = () => {
+      baseLoaded = true;
+      checkBothLoaded();
+    };
+
+    overlayImg.onload = () => {
+      overlayLoaded = true;
+      checkBothLoaded();
+    };
+
+    baseImg.onerror = () => reject(new Error('Failed to load base image'));
+    overlayImg.onerror = () =>
+      reject(new Error('Failed to load overlay image'));
+
+    baseImg.src = baseDataURL;
+    overlayImg.src = overlayDataURL;
   });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Model call failed: ${response.status} ${errorText}`);
-  }
-
-  return await response.json();
 }
 
-// Process image with Seedream-4
-async function processWithSeedream(token, newImageDataURL, lastImageDataURL) {
-  console.log('Image URLs for Seedream:', {
-    newImageDataURL,
-    lastImageDataURL,
+function loadImage(src) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.src = src;
   });
-
-  const input = {
-    size: '2K',
-    width: 2048,
-    height: 2048,
-    prompt: `Insert first image into second image at ${currentPlacement.x.toFixed(
-      2,
-    )}%, ${currentPlacement.y.toFixed(
-      2,
-    )}%, size ${currentPlacement.width.toFixed(
-      2,
-    )}% × ${currentPlacement.height.toFixed(
-      2,
-    )}%. No modifications to either image.`,
-
-    max_images: 2,
-    image_input: [lastImageDataURL, newImageDataURL],
-    aspect_ratio: '4:3',
-    sequential_image_generation: 'auto',
-  };
-
-  const result = await callReplicateModel(token, SEEDREAM_MODEL, input);
-
-  if (
-    result.output &&
-    Array.isArray(result.output) &&
-    result.output.length > 0
-  ) {
-    return result.output[0];
-  }
-
-  throw new Error('No output generated from Seedream-4 model');
 }
 
 // Save image data to Firebase
@@ -520,12 +479,14 @@ window.addEventListener(
 
     if (!currentImages[currentImgIdx].placement) return;
 
+    const p = currentImages[currentImgIdx].placement;
+
+    // Calculate center of the bbox
+    const centerX = p.x + p.width / 2;
+    const centerY = p.y + p.height / 2;
+
     img.style.transform = `scale(${1 + virtualScroll * 0.001})`;
-    img.style.transformOrigin =
-      currentImages[currentImgIdx].placement.centerX +
-      '% ' +
-      currentImages[currentImgIdx].placement.centerY +
-      '%';
+    img.style.transformOrigin = `${centerX}% ${centerY}%`;
 
     if (Math.abs(e.deltaY) > 100) {
       if (currentImgIdx > 0) currentImgIdx -= 1;
@@ -635,51 +596,18 @@ document.addEventListener('DOMContentLoaded', () => {
   console.log('DOM loaded, initializing...');
 
   initializeFirebase();
-
-  const saveTokenBtn = $('saveToken');
-  if (saveTokenBtn) {
-    saveTokenBtn.addEventListener('click', () => {
-      const tokenInput = $('replicateToken');
-      if (!tokenInput) return;
-
-      const token = tokenInput.value.trim();
-      if (!token) {
-        showStatus('Please enter a token', 'error');
-        return;
-      }
-
-      localStorage.setItem(TOKEN_KEY, token);
-      renderTokenStatus();
-      showStatus('Token saved successfully!');
-    });
-  }
-
-  const clearTokenBtn = $('clearToken');
-  if (clearTokenBtn) {
-    clearTokenBtn.addEventListener('click', () => {
-      localStorage.removeItem(TOKEN_KEY);
-      const tokenInput = $('replicateToken');
-      if (tokenInput) tokenInput.value = '';
-      renderTokenStatus();
-      showStatus('Token cleared');
-    });
-  }
-
-  renderTokenStatus();
 });
 
-// 'ENTER' key to process with Seedream after defining bbox placement
+// 'ENTER' key to process with Canvas after defining bbox placement
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
-    bbox.style.display = 'none';
-    console.log(
-      'ENTER pressed, processing with Seedream...',
-      bbox.style.display,
-    );
-
     if (currentPlacement && pendingImageFile) {
-      showStatus('🚀 Uploading and processing with Seedream...', 'success');
-      processSeedreamWithPlacement();
+      const bboxImage = document.getElementById('add-image');
+      bboxImage.style.display = 'none';
+      bbox.style.display = 'none';
+
+      showStatus('🚀 Uploading and processing with Canvas...', 'success');
+      processCanvasWithPlacement();
     } else if (!pendingImageFile) {
       showStatus('⚠️ Please upload an image first.', 'error');
     } else if (!currentPlacement) {
@@ -689,7 +617,31 @@ document.addEventListener('keydown', (e) => {
       );
     }
   }
+
+  // save current image with 'S' key
+  if (e.key === 's' || e.key === 'S') {
+    e.preventDefault();
+    saveCurrentImage();
+  }
 });
+
+// Function to save current image
+function saveCurrentImage() {
+  if (currentImgIdx < 0 || currentImgIdx >= currentImages.length) {
+    showStatus('⚠️ No image to save.', 'error');
+    return;
+  }
+
+  const currentImage = currentImages[currentImgIdx];
+  const link = document.createElement('a');
+  link.href = currentImage.dataURL;
+  link.download = `image_${currentImgIdx}_${Date.now()}.png`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+
+  showStatus('💾 Image saved to downloads!', 'success');
+}
 
 // Create or show floating "Process" button
 let processBtn = document.getElementById('processBtn');
@@ -708,11 +660,11 @@ if (!processBtn) {
   processBtn.style.zIndex = 10000;
   bbox.appendChild(processBtn);
 
-  // Trigger Seedream when clicked
+  // Trigger Canvas when clicked
   processBtn.addEventListener('click', async () => {
     processBtn.disabled = true;
     processBtn.textContent = 'Processing...';
-    await processSeedreamWithPlacement();
+    await processCanvasWithPlacement();
     processBtn.textContent = 'Done';
   });
 } else {
