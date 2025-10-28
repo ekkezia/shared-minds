@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Week 9 - Three.js Webcam Capture</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+        font-family: sans-serif;
+      }
+
+      #webcam-container {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #000;
+      }
+
+      #webcam {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        pointer-events: none; /* prevent taps from toggling pause */
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      /* Hide iOS media controls overlays */
+      #webcam::-webkit-media-controls-enclosure {
+        display: none !important;
+      }
+      #webcam::-webkit-media-controls {
+        display: none !important;
+      }
+
+      #three-canvas {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 2;
+        /* pointer-events: none; */ /* REMOVE THIS LINE */
+      }
+
+      @media (min-width: 768px) {
+        #three-canvas {
+          pointer-events: auto; /* desktop: enable OrbitControls */
+        }
+      }
+
+      #instructions {
+        position: fixed;
+        top: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 3;
+        background: rgba(0, 0, 0, 0.7);
+        color: white;
+        padding: 12px 24px;
+        border-radius: 8px;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="webcam-container">
+      <video
+        id="webcam"
+        autoplay
+        playsinline
+        webkit-playsinline
+        muted
+        disablepictureinpicture
+        controlslist="nodownload noplaybackrate nofullscreen"
+      ></video>
+    </div>
+    <canvas id="three-canvas"></canvas>
+
+    <div id="instructions"></div>
+
+    <script src="./index.js" type="module"></script>
+  </body>
+</html>
