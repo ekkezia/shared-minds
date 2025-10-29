@@ -113,7 +113,7 @@ const gyroDiv =
     el.style.fontFamily = 'monospace';
     el.style.fontSize = '12px';
     el.style.whiteSpace = 'pre';
-    el.style.opacity = 0;
+    el.style.display = 'none';
     document.body.appendChild(el);
     return el;
   })();
