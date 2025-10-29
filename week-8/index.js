@@ -899,6 +899,33 @@ async function filterPlanesByLocation(bounds) {
   });
 }
 
+// --- DELETE ALL DATA ON FIREBASE
+// --- BUTTONS --- //
+const btnStyle = `
+  position: fixed;
+  bottom: 10px;
+  left: 10px;
+  z-index: 1000;
+  padding: 10px;
+  background: rgba(0,0,0,0.6);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: sans-serif;
+`;
+
+// 🗑 Delete All (Firebase)
+const deleteAllBtn = document.createElement('button');
+deleteAllBtn.textContent = '🗑';
+deleteAllBtn.style.cssText = `${btnStyle}`;
+deleteAllBtn.onclick = () => {
+  if (confirm('Delete all captures from Firebase?')) {
+    deleteAll();
+  }
+};
+// document.body.appendChild(deleteAllBtn); // uncomment this to add trash delete button
+
 // --- Initialize everything ---
 (async () => {
   await requestMotionPermission();
