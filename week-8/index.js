@@ -214,7 +214,7 @@ function updateCameraFromGyro() {
 
   camera.rotation.order = 'YXZ';
   camera.rotation.x = pitch;
-  // camera.rotation.y = THREE.MathUtils.degToRad(gamma);
+  camera.rotation.y = THREE.MathUtils.degToRad(gamma);
 }
 
 // --- Device orientation listener ---
