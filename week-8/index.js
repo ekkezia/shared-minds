@@ -113,6 +113,7 @@ const gyroDiv =
     el.style.fontFamily = 'monospace';
     el.style.fontSize = '12px';
     el.style.whiteSpace = 'pre';
+    el.style.opacity = 0;
     document.body.appendChild(el);
     return el;
   })();
@@ -213,7 +214,7 @@ function updateCameraFromGyro() {
 
   camera.rotation.order = 'YXZ';
   camera.rotation.x = pitch;
-  camera.rotation.y = THREE.MathUtils.degToRad(gamma);
+  // camera.rotation.y = THREE.MathUtils.degToRad(gamma);
 }
 
 // --- Device orientation listener ---
@@ -653,6 +654,251 @@ function deleteAll() {
   }
 }
 
+// --- MAP ---
+// --- MAP FILTER SYSTEM ---
+
+// Globals
+let map, markerStart, markerEnd, mapRectangle, latLngBounds;
+let mapCloseBtn;
+
+// Create Map Filter button
+const mapToggleBtn = document.createElement('button');
+mapToggleBtn.textContent = '🗺 Map Filter';
+mapToggleBtn.style.cssText = `
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  z-index: 10;
+  padding: 10px 15px;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: sans-serif;
+`;
+document.body.appendChild(mapToggleBtn);
+
+// Create map container
+const mapContainer = document.createElement('div');
+mapContainer.id = 'map';
+mapContainer.style.cssText = `
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 50%;
+  z-index: 9;
+  display: none;
+  border: 2px solid white;
+`;
+document.body.appendChild(mapContainer);
+
+// --- Toggle Map Display ---
+mapToggleBtn.onclick = () => {
+  if (!map) initMap();
+
+  const isVisible = mapContainer.style.display === 'block';
+  if (isVisible) {
+    // Hide map and remove close button
+    mapContainer.style.display = 'none';
+    if (mapCloseBtn) {
+      mapCloseBtn.remove();
+      mapCloseBtn = null;
+    }
+  } else {
+    // Show map and add close button
+    mapContainer.style.display = 'block';
+    addCloseButton();
+  }
+};
+
+// --- Add Close Button next to Filter ---
+function addCloseButton() {
+  if (mapCloseBtn) return; // already exists
+  mapCloseBtn = document.createElement('button');
+  mapCloseBtn.textContent = '✖ Close';
+  mapCloseBtn.style.cssText = `
+    position: fixed;
+    top: 10px;
+    right: 130px;
+    z-index: 1000;
+    padding: 10px 15px;
+    background: rgba(0,0,0,0.6);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: sans-serif;
+  `;
+  mapCloseBtn.onclick = () => {
+    mapContainer.style.display = 'none';
+    mapCloseBtn.remove();
+    mapCloseBtn = null;
+  };
+  document.body.appendChild(mapCloseBtn);
+}
+
+// --- Initialize the Leaflet Map ---
+function initMap() {
+  map = L.map('map').setView([0, 0], 2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors',
+  }).addTo(map);
+
+  map.on('click', (e) => {
+    const { lat, lng } = e.latlng;
+
+    // Reset markers if both exist
+    if (markerStart && markerEnd) clearSelection();
+
+    // First click
+    if (!markerStart) {
+      markerStart = L.marker([lat, lng], { draggable: true }).addTo(map);
+      markerStart.on('drag', updateRectangle);
+    }
+    // Second click
+    else if (!markerEnd) {
+      markerEnd = L.marker([lat, lng], { draggable: true }).addTo(map);
+      markerEnd.on('drag', updateRectangle);
+
+      latLngBounds = L.latLngBounds(
+        markerStart.getLatLng(),
+        markerEnd.getLatLng(),
+      );
+      mapRectangle = L.rectangle(latLngBounds, {
+        color: 'blue',
+        weight: 2,
+      }).addTo(map);
+
+      showFilterInfobox(
+        latLngBounds,
+        () => {
+          filterPlanesByLocation(latLngBounds);
+          setResetMode();
+        },
+        clearSelection,
+      );
+    }
+  });
+}
+
+// --- Update rectangle as markers are dragged ---
+function updateRectangle() {
+  if (markerStart && markerEnd) {
+    latLngBounds = L.latLngBounds(
+      markerStart.getLatLng(),
+      markerEnd.getLatLng(),
+    );
+    if (!mapRectangle) {
+      mapRectangle = L.rectangle(latLngBounds, {
+        color: 'blue',
+        weight: 2,
+      }).addTo(map);
+    } else {
+      mapRectangle.setBounds(latLngBounds);
+    }
+  }
+}
+
+// --- Show confirmation infobox ---
+function showFilterInfobox(bounds, onConfirm, onCancel) {
+  const existingBox = document.getElementById('filter-infobox');
+  if (existingBox) existingBox.remove();
+
+  const box = document.createElement('div');
+  box.id = 'filter-infobox';
+  box.style.cssText = `
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 20;
+    background: rgba(0, 0, 0, 0.85);
+    color: white;
+    padding: 15px 20px;
+    border-radius: 10px;
+    font-family: sans-serif;
+    text-align: center;
+    max-width: 320px;
+  `;
+
+  box.innerHTML = `
+    <p>
+      Filter images to this range?<br>
+      LAT: ${bounds.getSouth().toFixed(2)} → ${bounds.getNorth().toFixed(2)}<br>
+      LON: ${bounds.getWest().toFixed(2)} → ${bounds.getEast().toFixed(2)}
+    </p>
+    <button id="filter-confirm" style="margin:5px;padding:5px 10px;">Yes</button>
+    <button id="filter-cancel" style="margin:5px;padding:5px 10px;">No</button>
+  `;
+
+  document.body.appendChild(box);
+
+  document.getElementById('filter-confirm').onclick = () => {
+    box.remove();
+    onConfirm?.();
+  };
+  document.getElementById('filter-cancel').onclick = () => {
+    box.remove();
+    onCancel?.();
+  };
+}
+
+// --- Clear rectangle + markers ---
+function clearSelection() {
+  if (mapRectangle) {
+    map.removeLayer(mapRectangle);
+    mapRectangle = null;
+  }
+  if (markerStart) {
+    map.removeLayer(markerStart);
+    markerStart = null;
+  }
+  if (markerEnd) {
+    map.removeLayer(markerEnd);
+    markerEnd = null;
+  }
+  latLngBounds = null;
+}
+
+// --- Switch Map button to Reset mode ---
+function setResetMode() {
+  mapToggleBtn.textContent = 'Reset Filter';
+  mapToggleBtn.onclick = () => {
+    clearSelection();
+    loadSavedPlanes(); // reload all images
+    mapToggleBtn.textContent = '🗺 Map Filter';
+    mapToggleBtn.onclick = () => {
+      mapContainer.style.display =
+        mapContainer.style.display === 'none' ? 'block' : 'none';
+    };
+  };
+}
+
+// --- Filter Firebase planes by selected area ---
+async function filterPlanesByLocation(bounds) {
+  if (!bounds) return;
+
+  // Remove existing planes
+  for (const p of planes) scene.remove(p);
+  planes.length = 0;
+
+  const snapshot = await get(ref(database, 'captures'));
+  const data = snapshot.val();
+  if (!data) return;
+
+  Object.values(data).forEach((capture) => {
+    const { location, imageData } = capture;
+    if (!location || !imageData) return;
+
+    const point = L.latLng(location.latitude, location.longitude);
+    if (bounds.contains(point)) {
+      addPlaneWithTexture(imageData);
+    }
+  });
+}
+
 // --- Initialize everything ---
 (async () => {
   await requestMotionPermission();
@@ -660,7 +906,8 @@ function deleteAll() {
   await setupControls();
   await initWebcam(); // mobile only
   loadSavedPlanes();
-  deleteAll();
+  initMap();
+  // deleteAll();
 
   animate();
 })();
