@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>WebXR Passthrough Hand Camera</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, user-scalable=no"
+    />
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        overflow: hidden;
+      }
+
+      #info {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 15px;
+        border-radius: 8px;
+        max-width: 300px;
+        z-index: 100;
+      }
+
+      #info h1 {
+        margin: 0 0 10px 0;
+        font-size: 20px;
+      }
+
+      #info p {
+        margin: 5px 0;
+        font-size: 14px;
+      }
+
+      button {
+        background: #0066ff;
+        color: white;
+        border: none;
+        padding: 12px 24px;
+        font-size: 16px;
+        border-radius: 6px;
+        cursor: pointer;
+        margin-top: 10px;
+      }
+
+      button:hover {
+        background: #0052cc;
+      }
+
+      #instructions {
+        position: absolute;
+        bottom: 10px;
+        right: 10px;
+        background: rgba(0, 0, 0, 0.8);
+        color: white;
+        padding: 10px;
+        border-radius: 8px;
+        font-size: 12px;
+        z-index: 100;
+      }
+
+      #instructions p {
+        margin: 3px 0;
+      }
+
+      #debug {
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        background: rgba(0, 0, 0, 0.9);
+        color: #00ff00;
+        padding: 10px;
+        border-radius: 5px;
+        font-family: 'Courier New', monospace;
+        font-size: 14px;
+        z-index: 1000;
+        max-width: 400px;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="info">
+      <h1>WebXR Hand Camera</h1>
+      <p>Pinch with both hands to frame and capture!</p>
+      <button id="ar-button">Start AR Experience</button>
+    </div>
+
+    <div id="instructions">
+      <p>📱 Best on Meta Quest Browser</p>
+      <p>👆 Left hand pinch = Top-left corner</p>
+      <p>👆 Right hand pinch = Bottom-right corner</p>
+      <p>📸 Both pinch = Capture frame</p>
+    </div>
+
+    <div id="debug"></div>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.145.0/build/three.module.js"
+        }
+      }
+    </script>
+    <script src="./index.js" type="module"></script>
+  </body>
+</html>

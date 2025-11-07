@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebXR Test</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      background: #222;
+      color: white;
+    }
+    .test {
+      background: #333;
+      padding: 15px;
+      margin: 10px 0;
+      border-radius: 8px;
+    }
+    .pass { border-left: 4px solid #0f0; }
+    .fail { border-left: 4px solid #f00; }
+  </style>
+</head>
+<body>
+  <h1>WebXR Diagnostics</h1>
+  <div id="results"></div>
+
+  <script>
+    const results = document.getElementById('results');
+
+    function addResult(name, passed, details) {
+      const div = document.createElement('div');
+      div.className = `test ${passed ? 'pass' : 'fail'}`;
+      div.innerHTML = `
+        <h3>${passed ? '✅' : '❌'} ${name}</h3>
+        <p>${details}</p>
+      `;
+      results.appendChild(div);
+    }
+
+    // Test 1: navigator.xr exists
+    addResult(
+      'WebXR API Available',
+      !!navigator.xr,
+      navigator.xr ? 'navigator.xr is present' : 'navigator.xr is undefined'
+    );
+
+    // Test 2: Check user agent
+    addResult(
+      'User Agent',
+      true,
+      navigator.userAgent
+    );
+
+    // Test 3: HTTPS check
+    addResult(
+      'Secure Context',
+      window.isSecureContext,
+      window.isSecureContext ? 'Running on HTTPS or localhost' : 'Not a secure context (needs HTTPS)'
+    );
+
+    // Test 4: Check XR support
+    if (navigator.xr) {
+      navigator.xr.isSessionSupported('immersive-vr').then(supported => {
+        addResult('immersive-vr Support', supported, supported ? 'VR is supported' : 'VR not supported');
+      });
+
+      navigator.xr.isSessionSupported('immersive-ar').then(supported => {
+        addResult('immersive-ar Support', supported, supported ? 'AR is supported' : 'AR not supported');
+      });
+
+      // Test if we can request a session
+      const testBtn = document.createElement('button');
+      testBtn.textContent = 'Test AR Session';
+      testBtn.style.cssText = 'padding: 15px 30px; font-size: 18px; margin-top: 20px; cursor: pointer;';
+      testBtn.onclick = async () => {
+        try {
+          const session = await navigator.xr.requestSession('immersive-ar', {
+            optionalFeatures: ['local-floor', 'bounded-floor']
+          });
+          addResult('AR Session Request', true, 'Successfully requested AR session!');
+          session.end();
+        } catch (err) {
+          addResult('AR Session Request', false, `Error: ${err.message}`);
+        }
+      };
+      results.appendChild(testBtn);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+{
+  "name": "threejs-webxr-passthrough",
+  "version": "1.0.0",
+  "description": "WebXR passthrough example based on threejs example VR paint, tested on Quest 2. Main changes include - Change session to immersive-ar, local-floor instead of local tracking space, transparent sky with alpha enabled\nMake sky transparent\nChange tracking space to local-floor space",
+  "main": "index.html",
+  "scripts": {
+    "dev": "vite",
+    "start": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "0.145.0"
+  },
+  "devDependencies": {
+    "@types/stats.js": "0.17.0",
+    "@types/three": "0.93.5",
+    "parcel-bundler": "^1.12.3",
+    "vite": "^7.2.1"
+  },
+  "keywords": [
+    "virtual-reality",
+    "webxr",
+    "quest",
+    "threejs"
+  ]
+}
