@@ -5,6 +5,31 @@
 
 import * as THREE from 'three';
 import { XRHandModelFactory } from 'https://cdn.jsdelivr.net/npm/three@0.145.0/examples/jsm/webxr/XRHandModelFactory.js';
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.4.0/firebase-app.js';
+import {
+  getDatabase,
+  ref,
+  get,
+  set,
+  push,
+  orderByKey,
+  query,
+} from 'https://www.gstatic.com/firebasejs/10.4.0/firebase-database.js';
+
+// Firebase Constants
+const firebaseConfig = {
+  apiKey: 'AIzaSyCC00ceFN729Q78X9qsvKSjttkN8tyJB5Y',
+  authDomain: 'fotofoto-27fa3.firebaseapp.com',
+  databaseURL: 'https://fotofoto-27fa3-default-rtdb.firebaseio.com',
+  projectId: 'fotofoto-27fa3',
+  storageBucket: 'fotofoto-27fa3.appspot.com',
+  messagingSenderId: '123456789', // Placeholder
+  appId: '1:123456789:web:abc123', // Placeholder
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const database = getDatabase(app);
 
 let camera, scene, renderer;
 let currentSession;
@@ -13,11 +38,6 @@ let currentSession;
 let leftHand, rightHand;
 let leftHandModel, rightHandModel;
 let handModelFactory;
-let leftPinchPos = null,
-  rightPinchPos = null;
-let leftPinching = false,
-  rightPinching = false;
-let wasBothPinching = false;
 let lastCaptureTime = 0;
 const CAPTURE_DEBOUNCE = 1000; // 1 second between captures
 
@@ -30,8 +50,8 @@ let frameCornerLeft, frameCornerRight;
 let frameLine;
 let capturedPlanes = [];
 
-// Dark overlay planes (to block passthrough except in frame area)
-let overlayTop, overlayBottom, overlayLeft, overlayRight, blackSphere;
+// Black sphere to block passthrough except in frame area
+let blackSphere;
 let passthroughWindow = null;
 
 // 3D Debug panel
@@ -39,9 +59,27 @@ let debugPanel;
 let debugCanvas;
 let debugTexture;
 
+// Camera access for capturing passthrough
+let xrGLBinding = null;
+let cameraTexture = null;
+
+// getUserMedia camera access (more compatible)
+let cameraVideo = null;
+let cameraStream = null;
+
+// Room management
+let currentRoomId = null;
+
 // Constants
 const PINCH_THRESHOLD = 0.03; // Distance in meters to consider as pinch
 const HAND_JOINT_COUNT = 25;
+
+// Get zoom factor from URL parameter (e.g., ?zoom=1.5)
+const urlParams = new URLSearchParams(window.location.search);
+const CAMERA_ZOOM_FACTOR = parseFloat(urlParams.get('zoom')) || 1.4;
+
+// Get max planes from URL parameter (e.g., ?maxplanes=20)
+const MAX_CAPTURED_PLANES = parseInt(urlParams.get('maxplanes')) || 10;
 
 // Debug logging
 let debugLines = [];
@@ -162,6 +200,134 @@ if (document.readyState === 'loading') {
   init();
 }
 
+// Generate random 4-character room ID
+function generateRoomId() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Removed ambiguous characters
+  let roomId = '';
+  for (let i = 0; i < 4; i++) {
+    roomId += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return roomId;
+}
+
+// Setup camera access using getUserMedia (works on more devices!)
+// IMPORTANT LIMITATION: getUserMedia gives ONE fixed camera feed that does NOT
+// track with head movement. When you look left/right, the video stays locked
+// to its initial orientation. This is a WebXR limitation - getUserMedia and
+// WebXR don't communicate about head tracking.
+//
+// WORKAROUND: Always face forward (same direction as when you started AR)
+// when capturing frames. Or use Unity with AR Foundation for proper tracking.
+async function setupCameraAccess() {
+  try {
+    debugLog('📷 Requesting camera via getUserMedia...');
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: 'environment', // Back/passthrough camera
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
+    });
+
+    // Create video element to receive stream
+    cameraVideo = document.createElement('video');
+    cameraVideo.setAttribute('playsinline', ''); // Important for mobile
+    cameraVideo.autoplay = true;
+    cameraVideo.srcObject = stream;
+    cameraStream = stream;
+
+    // Wait for video to be ready
+    await new Promise((resolve) => {
+      cameraVideo.onloadedmetadata = () => {
+        cameraVideo.play();
+        resolve();
+      };
+    });
+
+    debugLog('✅ Camera access granted!');
+    debugLog('⚠️ Keep facing forward for best results');
+    console.log(
+      'Camera video ready:',
+      cameraVideo.videoWidth,
+      'x',
+      cameraVideo.videoHeight,
+    );
+
+    // Add video to DOM for debugging (hidden by default)
+    cameraVideo.style.position = 'fixed';
+    cameraVideo.style.bottom = '10px';
+    cameraVideo.style.left = '10px';
+    cameraVideo.style.width = '160px';
+    cameraVideo.style.height = '90px';
+    cameraVideo.style.border = '2px solid yellow';
+    cameraVideo.style.zIndex = '9999';
+    cameraVideo.style.display = urlParams.get('showvideo') ? 'block' : 'none';
+    document.body.appendChild(cameraVideo);
+
+    if (urlParams.get('showvideo')) {
+      debugLog('📺 Video preview enabled (bottom-left)');
+    }
+
+    return true;
+  } catch (err) {
+    console.error('getUserMedia failed:', err);
+    debugLog(`❌ Camera denied: ${err.message}`);
+    return false;
+  }
+}
+
+// Setup room selection
+function setupRoomSelection() {
+  const modal = document.getElementById('room-modal');
+  const createBtn = document.getElementById('create-room-btn');
+  const joinBtn = document.getElementById('join-room-btn');
+  const roomInput = document.getElementById('room-id-input');
+  const currentRoomDiv = document.getElementById('current-room');
+  const roomIdDisplay = document.getElementById('room-id-display');
+  const roomInfo = document.getElementById('room-info');
+
+  // Create new room
+  createBtn.addEventListener('click', () => {
+    currentRoomId = generateRoomId();
+    roomIdDisplay.textContent = currentRoomId;
+    currentRoomDiv.style.display = 'block';
+    roomInfo.textContent = `Room: ${currentRoomId}`;
+
+    debugLog(`🏠 Created room: ${currentRoomId}`);
+
+    // Hide modal after 2 seconds
+    setTimeout(() => {
+      modal.classList.add('hidden');
+    }, 2000);
+  });
+
+  // Join existing room
+  joinBtn.addEventListener('click', () => {
+    const roomId = roomInput.value.toUpperCase().trim();
+    if (roomId.length === 4) {
+      currentRoomId = roomId;
+      roomInfo.textContent = `Room: ${currentRoomId}`;
+      modal.classList.add('hidden');
+      debugLog(`🚪 Joined room: ${currentRoomId}`);
+    } else {
+      alert('Please enter a valid 4-character room code');
+    }
+  });
+
+  // Allow Enter key to join
+  roomInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+      joinBtn.click();
+    }
+  });
+
+  // Auto-uppercase input
+  roomInput.addEventListener('input', (e) => {
+    e.target.value = e.target.value.toUpperCase();
+  });
+}
+
 function init() {
   console.log('Initializing Three.js and WebXR...');
   console.log('Document body:', document.body);
@@ -170,6 +336,16 @@ function init() {
     arButton: document.getElementById('ar-button'),
     instructions: document.getElementById('instructions'),
   });
+
+  // Setup room selection modal
+  setupRoomSelection();
+
+  // Show config in debug
+  debugLog(`🔍 Camera zoom: ${CAMERA_ZOOM_FACTOR}x`);
+  debugLog(`📦 Max captures: ${MAX_CAPTURED_PLANES}`);
+  if (urlParams.get('zoom') || urlParams.get('maxplanes')) {
+    debugLog(`(Set via URL parameters)`);
+  }
 
   const container = document.createElement('div');
   document.body.appendChild(container);
@@ -224,17 +400,21 @@ function init() {
   leftHand.addEventListener('connected', (event) => {
     console.log('Hand[0] connected!', event);
     const inputSource = event.data;
+    const previousHandedness = hand0Handedness;
     hand0Handedness = inputSource.handedness; // Store the actual handedness!
-    debugLog(`🤚 Hand[0] CONNECTED as ${hand0Handedness.toUpperCase()}`);
-    debugLog(
-      `Hand[0]: hand=${!!inputSource.hand} profiles=${
-        inputSource.profiles?.[0] || 'none'
-      }`,
-    );
+
+    debugLog(`🤚 Hand[0] -> ${hand0Handedness.toUpperCase()}`);
+
+    // Alert if handedness changed (this would indicate instability)
+    if (previousHandedness && previousHandedness !== hand0Handedness) {
+      debugLog(
+        `⚠️⚠️⚠️ Hand[0] CHANGED: ${previousHandedness} -> ${hand0Handedness}`,
+      );
+    }
   });
 
   leftHand.addEventListener('disconnected', () => {
-    debugLog('❌ Hand[0] disconnected');
+    debugLog(`❌ Hand[0] (${hand0Handedness}) disconnected`);
     hand0Handedness = null;
   });
 
@@ -247,17 +427,21 @@ function init() {
   rightHand.addEventListener('connected', (event) => {
     console.log('Hand[1] connected!', event);
     const inputSource = event.data;
+    const previousHandedness = hand1Handedness;
     hand1Handedness = inputSource.handedness; // Store the actual handedness!
-    debugLog(`🤚 Hand[1] CONNECTED as ${hand1Handedness.toUpperCase()}`);
-    debugLog(
-      `Hand[1]: hand=${!!inputSource.hand} profiles=${
-        inputSource.profiles?.[0] || 'none'
-      }`,
-    );
+
+    debugLog(`🤚 Hand[1] -> ${hand1Handedness.toUpperCase()}`);
+
+    // Alert if handedness changed (this would indicate instability)
+    if (previousHandedness && previousHandedness !== hand1Handedness) {
+      debugLog(
+        `⚠️⚠️⚠️ Hand[1] CHANGED: ${previousHandedness} -> ${hand1Handedness}`,
+      );
+    }
   });
 
   rightHand.addEventListener('disconnected', () => {
-    debugLog('❌ Hand[1] disconnected');
+    debugLog(`❌ Hand[1] (${hand1Handedness}) disconnected`);
     hand1Handedness = null;
   });
 
@@ -272,8 +456,13 @@ function init() {
     return;
   }
 
-  arButton.addEventListener('click', () => {
+  arButton.addEventListener('click', async () => {
     console.log('🖱️ AR button clicked!');
+
+    // First, request camera access
+    await setupCameraAccess();
+
+    // Then start AR
     startAR();
   });
 
@@ -473,7 +662,11 @@ function detectHandGesture(hand, expectedHandedness) {
   // Right hand has 21 joints, left hand has more (up to 26)
   const minJoints = expectedHandedness === 'RIGHT' ? 21 : 24;
   if (!joints || joints.length < minJoints) {
-    debugLog(`${expectedHandedness} only has ${joints?.length || 0} joints (need ${minJoints})`);
+    debugLog(
+      `${expectedHandedness} only has ${
+        joints?.length || 0
+      } joints (need ${minJoints})`,
+    );
     return null;
   }
 
@@ -539,9 +732,19 @@ function detectHandGesture(hand, expectedHandedness) {
     // Right hand - normal order (thumb to pinky: 0-4, 5-8, 9-12, 13-16, 17-20)
     thumbExtended = isFingerExtended('THUMB', joints[2], joints[3], joints[4]);
     indexExtended = isFingerExtended('INDEX', joints[6], joints[7], joints[8]);
-    middleExtended = isFingerExtended('MIDDLE', joints[10], joints[11], joints[12]);
+    middleExtended = isFingerExtended(
+      'MIDDLE',
+      joints[10],
+      joints[11],
+      joints[12],
+    );
     ringExtended = isFingerExtended('RING', joints[14], joints[15], joints[16]);
-    pinkyExtended = isFingerExtended('PINKY', joints[18], joints[19], joints[20]);
+    pinkyExtended = isFingerExtended(
+      'PINKY',
+      joints[18],
+      joints[19],
+      joints[20],
+    );
   } else {
     // Left hand - REVERSED order AND reversed within each finger!
     // Based on user report: index is [18-22] (tip to metacarpal), thumb tip is [23], thumb distal is [24]
@@ -549,17 +752,37 @@ function detectHandGesture(hand, expectedHandedness) {
 
     pinkyExtended = isFingerExtended('PINKY', joints[4], joints[3], joints[2]); // Reversed within finger
     ringExtended = isFingerExtended('RING', joints[8], joints[7], joints[6]); // Reversed
-    middleExtended = isFingerExtended('MIDDLE', joints[12], joints[11], joints[10]); // Reversed
+    middleExtended = isFingerExtended(
+      'MIDDLE',
+      joints[12],
+      joints[11],
+      joints[10],
+    ); // Reversed
 
     // Index: [18-22] is tip to metacarpal, use [20, 19, 18] for (base, mid, tip)
-    indexExtended = isFingerExtended('INDEX', joints[20], joints[19], joints[18]);
+    indexExtended = isFingerExtended(
+      'INDEX',
+      joints[20],
+      joints[19],
+      joints[18],
+    );
 
     // Thumb: [23]=tip, [24]=distal, [25]=proximal (if exists)
     // Try using [25, 24, 23] for (base, mid, tip) or [24, 23, 22] if no [25]
     if (joints[25]) {
-      thumbExtended = isFingerExtended('THUMB', joints[25], joints[24], joints[23]);
+      thumbExtended = isFingerExtended(
+        'THUMB',
+        joints[25],
+        joints[24],
+        joints[23],
+      );
     } else if (joints[22]) {
-      thumbExtended = isFingerExtended('THUMB', joints[24], joints[23], joints[22]);
+      thumbExtended = isFingerExtended(
+        'THUMB',
+        joints[24],
+        joints[23],
+        joints[22],
+      );
     } else {
       thumbExtended = false; // Not enough joints
     }
@@ -571,15 +794,15 @@ function detectHandGesture(hand, expectedHandedness) {
   const threeFingersCurled = !middleExtended && !ringExtended && !pinkyExtended;
   const thumbAndIndexExtended = thumbExtended && indexExtended;
 
-  // Compact debug: show finger states
-  const fingerStates = `T${thumbExtended ? '✓' : '✗'} I${
-    indexExtended ? '✓' : '✗'
-  } M${middleExtended ? '✓' : '✗'} R${ringExtended ? '✓' : '✗'} P${
-    pinkyExtended ? '✓' : '✗'
-  }`;
+  // Compact debug: show finger states (DISABLED - too spammy)
+  // const fingerStates = `T${thumbExtended ? '✓' : '✗'} I${
+  //   indexExtended ? '✓' : '✗'
+  // } M${middleExtended ? '✓' : '✗'} R${ringExtended ? '✓' : '✗'} P${
+  //   pinkyExtended ? '✓' : '✗'
+  // }`;
 
-  // Debug: show finger states (can disable once working)
-  debugLog(`🤚 ${handedness} Fingers: ${fingerStates}`);
+  // Debug: show finger states (DISABLED to prevent spam)
+  // debugLog(`🤚 ${handedness} Fingers: ${fingerStates}`);
 
   // If the 3 main fingers aren't curled, no gesture at all
   if (!threeFingersCurled) {
@@ -735,17 +958,18 @@ function isPinching(hand) {
   return distance < PINCH_THRESHOLD;
 }
 
-function captureFrame(topLeft, bottomRight) {
+async function captureFrame(topLeft, bottomRight) {
   console.log('Capturing frame!', topLeft, bottomRight);
+  debugLog('📸 Capturing with camera access...');
 
   // Calculate frame dimensions
   const width = Math.abs(bottomRight.x - topLeft.x);
   const height = Math.abs(topLeft.y - bottomRight.y);
 
-  if (width < 0.01 || height < 0.01) {
-    console.log('Frame too small, skipping capture');
-    return;
-  }
+  // if (width < 0.01 || height < 0.01) {
+  //   console.log('Frame too small, skipping capture');
+  //   return;
+  // }
 
   // Create a textured plane
   const planeGeometry = new THREE.PlaneGeometry(width, height);
@@ -757,40 +981,275 @@ function captureFrame(topLeft, bottomRight) {
   canvas.height = Math.floor(1024 * aspectRatio);
   const ctx = canvas.getContext('2d');
 
-  // Try to capture from the renderer's canvas
+  // Project 3D frame positions to 2D screen space for accurate cropping
+  const topLeftScreen = new THREE.Vector3(topLeft.x, topLeft.y, topLeft.z);
+  const bottomRightScreen = new THREE.Vector3(
+    bottomRight.x,
+    bottomRight.y,
+    bottomRight.z,
+  );
+
+  topLeftScreen.project(camera);
+  bottomRightScreen.project(camera);
+
+  console.log('3D positions:', { topLeft, bottomRight });
+  console.log('Projected 2D:', { topLeftScreen, bottomRightScreen });
+
+  // Try to capture from the camera texture (if available)
   try {
-    // Get the renderer's canvas
-    const rendererCanvas = renderer.domElement;
-
-    // Project 3D frame positions to screen coordinates to crop properly
-    const minX = Math.min(topLeft.x, bottomRight.x);
-    const maxX = Math.max(topLeft.x, bottomRight.x);
-    const minY = Math.min(topLeft.y, bottomRight.y);
-    const maxY = Math.max(topLeft.y, bottomRight.y);
-
-    // Create temporary vectors for projection
-    const topLeftScreen = new THREE.Vector3(minX, maxY, (topLeft.z + bottomRight.z) / 2);
-    const bottomRightScreen = new THREE.Vector3(maxX, minY, (topLeft.z + bottomRight.z) / 2);
-
-    // Project to screen space
-    topLeftScreen.project(camera);
-    bottomRightScreen.project(camera);
-
-    // Convert from NDC (-1 to 1) to pixel coordinates
-    const canvasWidth = rendererCanvas.width;
-    const canvasHeight = rendererCanvas.height;
-
-    const cropX = ((topLeftScreen.x + 1) / 2) * canvasWidth;
-    const cropY = ((1 - topLeftScreen.y) / 2) * canvasHeight;
-    const cropWidth = ((bottomRightScreen.x - topLeftScreen.x) / 2) * canvasWidth;
-    const cropHeight = ((topLeftScreen.y - bottomRightScreen.y) / 2) * canvasHeight;
-
-    // Draw the cropped portion of the renderer canvas
-    ctx.drawImage(
-      rendererCanvas,
-      cropX, cropY, cropWidth, cropHeight,
-      0, 0, canvas.width, canvas.height
+    console.log(
+      'Capture attempt - cameraVideo:',
+      !!cameraVideo,
+      'cameraTexture:',
+      cameraTexture,
+      'xrGLBinding:',
+      !!xrGLBinding,
     );
+    debugLog(
+      `Capture: video=${!!cameraVideo} tex=${!!cameraTexture} binding=${!!xrGLBinding}`,
+    );
+
+    // METHOD 1: Use getUserMedia video (BEST compatibility)
+    if (
+      cameraVideo &&
+      cameraVideo.readyState === cameraVideo.HAVE_ENOUGH_DATA
+    ) {
+      console.log('Using getUserMedia video feed');
+      debugLog('📹 Using getUserMedia video');
+
+      // Check if video is actually playing (not frozen)
+      const currentTime = cameraVideo.currentTime;
+      console.log(
+        'Video currentTime:',
+        currentTime,
+        'paused:',
+        cameraVideo.paused,
+      );
+
+      if (cameraVideo.paused) {
+        console.warn('⚠️ Video is paused! Attempting to resume...');
+        cameraVideo.play().catch((e) => console.error('Play failed:', e));
+      }
+
+      // Get video dimensions
+      const videoWidth = cameraVideo.videoWidth;
+      const videoHeight = cameraVideo.videoHeight;
+
+      // Convert normalized device coordinates (-1 to 1) to video coordinates (0 to videoWidth/Height)
+      // topLeftScreen and bottomRightScreen are in NDC after .project()
+
+      // Calculate crop region in video space
+      // NDC: -1 (left/bottom) to +1 (right/top)
+      // We need to map this to video coordinates
+
+      // Horizontal mapping: -1 = 0, +1 = videoWidth
+      const cropLeft = ((topLeftScreen.x + 1) / 2) * videoWidth;
+      const cropRight = ((bottomRightScreen.x + 1) / 2) * videoWidth;
+
+      // Vertical mapping: +1 = 0 (top), -1 = videoHeight (bottom) - Y is inverted!
+      const cropTop = ((1 - topLeftScreen.y) / 2) * videoHeight;
+      const cropBottom = ((1 - bottomRightScreen.y) / 2) * videoHeight;
+
+      // Calculate crop dimensions
+      const cropX = Math.min(cropLeft, cropRight);
+      const cropY = Math.min(cropTop, cropBottom);
+      const cropWidth = Math.abs(cropRight - cropLeft);
+      const cropHeight = Math.abs(cropBottom - cropTop);
+
+      // ZOOM FACTOR: To match passthrough perspective
+      // getUserMedia shows wider FOV than XR passthrough
+      // Typical Quest FOV is ~90°, getUserMedia is ~60-70°
+      // So we need to zoom in by ~1.3-1.5x
+      // You can adjust this via URL: ?zoom=1.5
+      const ZOOM_FACTOR = CAMERA_ZOOM_FACTOR;
+
+      // Calculate zoomed crop (crop from center)
+      const zoomCropWidth = cropWidth / ZOOM_FACTOR;
+      const zoomCropHeight = cropHeight / ZOOM_FACTOR;
+      const zoomCropX = cropX + (cropWidth - zoomCropWidth) / 2;
+      const zoomCropY = cropY + (cropHeight - zoomCropHeight) / 2;
+
+      // CLAMP crop coordinates to video bounds (prevents black bars)
+      const clampedX = Math.max(
+        0,
+        Math.min(zoomCropX, videoWidth - zoomCropWidth),
+      );
+      const clampedY = Math.max(
+        0,
+        Math.min(zoomCropY, videoHeight - zoomCropHeight),
+      );
+      const clampedWidth = Math.min(zoomCropWidth, videoWidth - clampedX);
+      const clampedHeight = Math.min(zoomCropHeight, videoHeight - clampedY);
+
+      console.log('Video dimensions:', videoWidth, 'x', videoHeight);
+      console.log('Original crop:', { cropX, cropY, cropWidth, cropHeight });
+      console.log('Zoomed crop:', {
+        x: zoomCropX,
+        y: zoomCropY,
+        w: zoomCropWidth,
+        h: zoomCropHeight,
+      });
+      console.log('Clamped crop:', {
+        x: clampedX,
+        y: clampedY,
+        w: clampedWidth,
+        h: clampedHeight,
+      });
+
+      // Check if crop is valid
+      if (clampedWidth < 10 || clampedHeight < 10) {
+        console.warn('Crop too small or out of bounds!');
+        debugLog('⚠️ Frame outside camera view');
+
+        // Fill with warning instead of black
+        const gradient = ctx.createLinearGradient(
+          0,
+          0,
+          canvas.width,
+          canvas.height,
+        );
+        gradient.addColorStop(0, '#ff9900');
+        gradient.addColorStop(1, '#ff6600');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 30px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('FRAME OUTSIDE', canvas.width / 2, canvas.height / 2 - 20);
+        ctx.fillText('CAMERA VIEW', canvas.width / 2, canvas.height / 2 + 20);
+      } else {
+        // Draw the cropped and zoomed portion of video to canvas
+        ctx.drawImage(
+          cameraVideo,
+          clampedX,
+          clampedY,
+          clampedWidth,
+          clampedHeight, // Source crop (from video)
+          0,
+          0,
+          canvas.width,
+          canvas.height, // Destination (full canvas)
+        );
+      }
+
+      debugLog('✅ Captured from video feed!');
+      debugLog(
+        `Crop: ${Math.round(cropWidth)}x${Math.round(
+          cropHeight,
+        )} @ zoom ${ZOOM_FACTOR}x`,
+      );
+    } else if (cameraTexture && xrGLBinding) {
+      // METHOD 2: Use XR Raw Camera Access (if available)
+      // We have camera access! Draw the camera texture
+      console.log('Attempting to read camera texture...');
+      const gl = renderer.getContext();
+
+      // Create a framebuffer to read the camera texture
+      const fb = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+      gl.framebufferTexture2D(
+        gl.FRAMEBUFFER,
+        gl.COLOR_ATTACHMENT0,
+        gl.TEXTURE_2D,
+        cameraTexture,
+        0,
+      );
+
+      // Check framebuffer status
+      const fbStatus = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+      console.log(
+        'Framebuffer status:',
+        fbStatus,
+        'Complete:',
+        gl.FRAMEBUFFER_COMPLETE,
+      );
+
+      if (fbStatus === gl.FRAMEBUFFER_COMPLETE) {
+        // Read pixels from the camera texture
+        const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+        gl.readPixels(
+          0,
+          0,
+          canvas.width,
+          canvas.height,
+          gl.RGBA,
+          gl.UNSIGNED_BYTE,
+          pixels,
+        );
+
+        // Check if we got actual data
+        const hasData = pixels.some((p) => p !== 0);
+        console.log('Pixels read, has non-zero data:', hasData);
+
+        // Create ImageData and put on canvas
+        const imageData = new ImageData(
+          new Uint8ClampedArray(pixels),
+          canvas.width,
+          canvas.height,
+        );
+        ctx.putImageData(imageData, 0, 0);
+
+        // Cleanup
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.deleteFramebuffer(fb);
+
+        debugLog(`📷 Camera texture: ${hasData ? 'SUCCESS' : 'EMPTY'}`);
+      } else {
+        console.warn('Framebuffer incomplete, status:', fbStatus);
+        debugLog('⚠️ Framebuffer incomplete');
+        throw new Error('Framebuffer incomplete');
+      }
+    } else {
+      // No camera texture, try capturing renderer canvas
+      console.log('No camera texture, using renderer canvas');
+      debugLog('⚠️ Using renderer canvas (no camera)');
+      const rendererCanvas = renderer.domElement;
+
+      // Project 3D frame positions to screen coordinates to crop properly
+      const minX = Math.min(topLeft.x, bottomRight.x);
+      const maxX = Math.max(topLeft.x, bottomRight.x);
+      const minY = Math.min(topLeft.y, bottomRight.y);
+      const maxY = Math.max(topLeft.y, bottomRight.y);
+
+      const topLeftScreen = new THREE.Vector3(
+        minX,
+        maxY,
+        (topLeft.z + bottomRight.z) / 2,
+      );
+      const bottomRightScreen = new THREE.Vector3(
+        maxX,
+        minY,
+        (topLeft.z + bottomRight.z) / 2,
+      );
+
+      topLeftScreen.project(camera);
+      bottomRightScreen.project(camera);
+
+      const canvasWidth = rendererCanvas.width;
+      const canvasHeight = rendererCanvas.height;
+
+      const cropX = ((topLeftScreen.x + 1) / 2) * canvasWidth;
+      const cropY = ((1 - topLeftScreen.y) / 2) * canvasHeight;
+      const cropWidth =
+        ((bottomRightScreen.x - topLeftScreen.x) / 2) * canvasWidth;
+      const cropHeight =
+        ((topLeftScreen.y - bottomRightScreen.y) / 2) * canvasHeight;
+
+      // Draw the cropped portion
+      ctx.drawImage(
+        rendererCanvas,
+        cropX,
+        cropY,
+        cropWidth,
+        cropHeight,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      );
+
+      debugLog('⚠️ No camera texture, using renderer canvas');
+    }
 
     // Add small timestamp in corner
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
@@ -798,21 +1257,36 @@ function captureFrame(topLeft, bottomRight) {
     ctx.fillStyle = 'white';
     ctx.font = '16px Arial';
     ctx.textAlign = 'right';
-    ctx.fillText(new Date().toLocaleTimeString(), canvas.width - 10, canvas.height - 15);
-
+    ctx.fillText(
+      new Date().toLocaleTimeString(),
+      canvas.width - 10,
+      canvas.height - 15,
+    );
   } catch (err) {
-    console.warn('Could not capture from renderer, using fallback:', err);
-    // Fallback: Just capture the entire renderer output
-    const rendererCanvas = renderer.domElement;
-    ctx.drawImage(rendererCanvas, 0, 0, canvas.width, canvas.height);
+    console.warn('Could not capture camera:', err);
+    debugLog(`❌ Capture error: ${err.message}`);
 
-    // Add timestamp
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-    ctx.fillRect(canvas.width - 200, canvas.height - 40, 200, 40);
+    // Final fallback: gradient
+    const gradient = ctx.createLinearGradient(
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    );
+    gradient.addColorStop(0, '#ff006e');
+    gradient.addColorStop(0.5, '#8338ec');
+    gradient.addColorStop(1, '#3a86ff');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
     ctx.fillStyle = 'white';
-    ctx.font = '16px Arial';
-    ctx.textAlign = 'right';
-    ctx.fillText(new Date().toLocaleTimeString(), canvas.width - 10, canvas.height - 15);
+    ctx.font = 'bold 30px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(
+      'CAMERA ACCESS UNAVAILABLE',
+      canvas.width / 2,
+      canvas.height / 2,
+    );
   }
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -824,6 +1298,15 @@ function captureFrame(topLeft, bottomRight) {
   });
   const plane = new THREE.Mesh(planeGeometry, planeMaterial);
 
+  // Add yellow border around the captured plane
+  const borderGeometry = new THREE.EdgesGeometry(planeGeometry);
+  const borderMaterial = new THREE.LineBasicMaterial({
+    color: 0xffff00,
+    linewidth: 3,
+  });
+  const border = new THREE.LineSegments(borderGeometry, borderMaterial);
+  plane.add(border);
+
   // Position plane at center of frame
   plane.position.set(
     (topLeft.x + bottomRight.x) / 2,
@@ -831,11 +1314,42 @@ function captureFrame(topLeft, bottomRight) {
     (topLeft.z + bottomRight.z) / 2,
   );
 
-  // Make plane face the camera
-  plane.lookAt(camera.position);
+  // Match camera rotation
+  plane.quaternion.copy(camera.quaternion);
 
   scene.add(plane);
   capturedPlanes.push(plane);
+
+  // Convert canvas to data URL and save to Firebase
+  const imageDataURL = canvas.toDataURL('image/png');
+  const captureData = {
+    timestamp: Date.now(),
+    imageData: imageDataURL,
+    dimensions: {
+      width: width,
+      height: height,
+    },
+    position: {
+      x: (topLeft.x + bottomRight.x) / 2,
+      y: (topLeft.y + bottomRight.y) / 2,
+      z: (topLeft.z + bottomRight.z) / 2,
+    },
+  };
+
+  // Save to Firebase (in room-specific folder)
+  try {
+    if (!currentRoomId) {
+      debugLog('⚠️ No room selected');
+      return;
+    }
+    const capturesRef = ref(database, `rooms/${currentRoomId}/captures`);
+    const newCaptureRef = push(capturesRef);
+    await set(newCaptureRef, captureData);
+    debugLog(`💾 Saved to room: ${currentRoomId}`);
+  } catch (err) {
+    console.warn('Could not save to Firebase:', err);
+    debugLog('⚠️ Firebase save failed');
+  }
 
   // Play sound effect
   try {
@@ -843,21 +1357,20 @@ function captureFrame(topLeft, bottomRight) {
     audio.volume = 0.5; // Set volume to 50%
     audio.play().catch((err) => {
       console.warn('Could not play camera sound:', err);
-      debugLog('📸 Captured (no sound)');
     });
     debugLog('📸 Captured!');
   } catch (err) {
     console.warn('Error creating audio:', err);
-    debugLog('📸 Captured (no sound)');
   }
 
   // Limit number of captured planes
-  if (capturedPlanes.length > 5) {
+  if (capturedPlanes.length > MAX_CAPTURED_PLANES) {
     const oldPlane = capturedPlanes.shift();
     scene.remove(oldPlane);
     oldPlane.geometry.dispose();
     oldPlane.material.map.dispose();
     oldPlane.material.dispose();
+    debugLog(`🗑️ Removed oldest capture (limit: ${MAX_CAPTURED_PLANES})`);
   }
 }
 
@@ -866,9 +1379,9 @@ function updateFrameVisualization() {
   let actualLeftHand = null;
   let actualRightHand = null;
 
-  // Debug: Log the handedness values
+  // Debug: Log the handedness values (reduce frequency to 5 seconds to avoid spam)
   const debugNow = Date.now();
-  if (debugNow - lastDetailedDebugTime > 500) {
+  if (debugNow - lastDetailedDebugTime > 5000) {
     debugLog(`🔍 hand0=${hand0Handedness} hand1=${hand1Handedness}`);
   }
 
@@ -885,20 +1398,20 @@ function updateFrameVisualization() {
     actualRightHand = rightHand; // getHand(1) is right hand
   }
 
-  // Debug: Log what was mapped
-  if (debugNow - lastDetailedDebugTime > 500) {
-    const leftMapped = actualLeftHand
-      ? actualLeftHand === leftHand
-        ? 'hand[0]'
-        : 'hand[1]'
-      : 'NONE';
-    const rightMapped = actualRightHand
-      ? actualRightHand === leftHand
-        ? 'hand[0]'
-        : 'hand[1]'
-      : 'NONE';
-    debugLog(`🗺️ Mapped: LEFT=${leftMapped} RIGHT=${rightMapped}`);
-  }
+  // Debug: Log what was mapped (DISABLED to reduce spam)
+  // if (debugNow - lastDetailedDebugTime > 5000) {
+  //   const leftMapped = actualLeftHand
+  //     ? actualLeftHand === leftHand
+  //       ? 'hand[0]'
+  //       : 'hand[1]'
+  //     : 'NONE';
+  //   const rightMapped = actualRightHand
+  //     ? actualRightHand === leftHand
+  //       ? 'hand[0]'
+  //       : 'hand[1]'
+  //     : 'NONE';
+  //   debugLog(`🗺️ Mapped: LEFT=${leftMapped} RIGHT=${rightMapped}`);
+  // }
 
   // Detect gestures for both hands using the actual handedness
   const leftGesture = actualLeftHand
@@ -908,13 +1421,13 @@ function updateFrameVisualization() {
     ? detectHandGesture(actualRightHand, 'RIGHT')
     : null;
 
-  // Debug: Log detected gestures
-  if (debugNow - lastDetailedDebugTime > 500) {
-    if (actualLeftHand)
-      debugLog(`👈 LEFT detection result: ${leftGesture || 'null'}`);
-    if (actualRightHand)
-      debugLog(`👉 RIGHT detection result: ${rightGesture || 'null'}`);
-  }
+  // Debug: Log detected gestures (DISABLED to reduce spam)
+  // if (debugNow - lastDetailedDebugTime > 5000) {
+  //   if (actualLeftHand)
+  //     debugLog(`👈 LEFT detection result: ${leftGesture || 'null'}`);
+  //   if (actualRightHand)
+  //     debugLog(`👉 RIGHT detection result: ${rightGesture || 'null'}`);
+  // }
 
   const leftLShape = leftGesture === 'L_SHAPE';
   const rightLShape = rightGesture === 'L_SHAPE';
@@ -962,94 +1475,29 @@ function updateFrameVisualization() {
   // Check if both hands are pinching (capture trigger)
   const bothPinch = leftPinch && rightPinch;
 
-  // Debug: Show current status
+  // Debug: Show current status (DISABLED - hands are working now, no need for spam)
+  // Only show hand mapping every 10 seconds for monitoring
   const now = Date.now();
-  if (now - lastDetailedDebugTime > 500) {
-    const leftState = leftGesture || 'none';
-    const rightState = rightGesture || 'none';
-
-    // Show both hands status in one line
-    const leftIcon = leftFrameGesture ? '🟡' : '⚫';
-    const rightIcon = rightFrameGesture ? '🟡' : '⚫';
-    debugLog(`${leftIcon} L:${leftState} | R:${rightState} ${rightIcon}`);
-
-    // Debug what the session reports
-    let sessionLeftCount = 0;
-    let sessionRightCount = 0;
-    if (currentSession && currentSession.inputSources) {
-      currentSession.inputSources.forEach((source) => {
-        if (source.hand) {
-          if (source.handedness === 'left') sessionLeftCount++;
-          if (source.handedness === 'right') sessionRightCount++;
-        }
-      });
-    }
-    debugLog(
-      `Session: ${sessionLeftCount} left, ${sessionRightCount} right hands`,
-    );
-
-    // Debug handedness tracking
-    debugLog(
-      `Hand mapping: [0]=${hand0Handedness || 'none'} [1]=${
-        hand1Handedness || 'none'
-      }`,
-    );
-
-    // Debug model data availability
-    const leftModelHasData =
-      leftHandModel &&
-      leftHandModel.children &&
-      leftHandModel.children.length > 0;
-    const rightModelHasData =
-      rightHandModel &&
-      rightHandModel.children &&
-      rightHandModel.children.length > 0;
-    debugLog(
-      `Models: hand[0]=${leftModelHasData ? 'HAS DATA' : 'empty'} hand[1]=${
-        rightModelHasData ? 'HAS DATA' : 'empty'
-      }`,
-    );
-
-    // Debug which actual hand is being used
-    const actualLeftUsed =
-      actualLeftHand === leftHand
-        ? '0'
-        : actualLeftHand === rightHand
-        ? '1'
-        : 'none';
-    const actualRightUsed =
-      actualRightHand === leftHand
-        ? '0'
-        : actualRightHand === rightHand
-        ? '1'
-        : 'none';
-    debugLog(`Using: L=hand[${actualLeftUsed}] R=hand[${actualRightUsed}]`);
-
-    // Debug if detection is working
-    if (actualLeftHand && !leftGesture) {
-      debugLog(`⚠️ Left hand object exists but no gesture detected`);
-    }
-    if (actualRightHand && !rightGesture) {
-      debugLog(`⚠️ Right hand object exists but no gesture detected`);
+  if (now - lastDetailedDebugTime > 10000) {
+    // Only show if there's an issue
+    if (!hand0Handedness && !hand1Handedness) {
+      debugLog(`⚠️ No hands connected`);
     }
 
-    // Debug sphere visibility
-    const leftSphereVisible = frameCornerLeft.visible;
-    const rightSphereVisible = frameCornerRight.visible;
-    debugLog(`Spheres - L:${leftSphereVisible} R:${rightSphereVisible}`);
-
-    if (bothFrameGesture) {
-      debugLog(`✅ BOTH HANDS - Frame visible`);
-    } else if (leftFrameGesture) {
-      debugLog(`⚠️ Only LEFT detected`);
-    } else if (rightFrameGesture) {
-      debugLog(`⚠️ Only RIGHT detected`);
-    }
-
-    if (bothPinch && bothFrameGesture) {
-      debugLog(`📸 READY TO CAPTURE!`);
-    }
     lastDetailedDebugTime = now;
+  }
+
+  // Only log CHANGES or important events (not every frame)
+  if (bothFrameGesture) {
+    // Only log once when both hands detected
+    if (!frameLine.visible) {
+      debugLog(`✅ BOTH HANDS - Frame visible`);
+    }
+  }
+
+  if (bothPinch && bothFrameGesture) {
+    // This will get logged with capture anyway
+    // debugLog(`📸 READY TO CAPTURE!`);
   }
 
   // Trigger capture if both hands pinching while frame is active
@@ -1114,8 +1562,8 @@ function updateFrameVisualization() {
     passthroughWindow.position.set(centerX, centerY, avgZ - 0.01);
     passthroughWindow.scale.set(width, height, 1);
 
-    // Rotate to face camera
-    passthroughWindow.lookAt(camera.position);
+    // Match camera's rotation instead of just looking at it
+    passthroughWindow.quaternion.copy(camera.quaternion);
   } else {
     frameLine.visible = false;
     passthroughWindow.visible = false;
@@ -1132,38 +1580,87 @@ function animate() {
   renderer.setAnimationLoop(render);
 }
 
-function render() {
-  // Debug: Check hand status periodically
-  const now = Date.now();
-  if (now - lastHandDebugTime > 2000) {
-    if (currentSession) {
-      // Check input sources directly
-      const sources = currentSession.inputSources;
-      debugLog(`Input sources: ${sources.length}`);
+let lastCameraDebugTime = 0;
+let renderCallCount = 0;
+let cameraStatusReported = false;
 
-      let hasControllers = false;
-      let hasHands = false;
-
-      sources.forEach((source) => {
-        if (source.hand) {
-          hasHands = true;
-          debugLog(`✋ ${source.handedness} hand detected`);
-        } else {
-          hasControllers = true;
-          debugLog(`🎮 ${source.handedness} controller`);
-        }
-      });
-
-      if (hasControllers && !hasHands) {
-        debugLog(`❌ PUT DOWN CONTROLLERS!`);
-        debugLog(`Wave hands without holding anything`);
-      }
-
-      // Hand gesture checking is now done in updateFrameVisualization()
-      // with proper handedness detection
-    }
-    lastHandDebugTime = now;
+function render(timestamp, frame) {
+  // Debug: Check if render is even being called
+  renderCallCount++;
+  if (renderCallCount === 1) {
+    debugLog('🎬 Render loop started!');
   }
+
+  // Try to get camera image if available
+  if (frame && xrGLBinding && currentSession) {
+    try {
+      const pose = frame.getViewerPose(renderer.xr.getReferenceSpace());
+      if (pose && pose.views && pose.views.length > 0) {
+        const view = pose.views[0];
+
+        // Report camera status ONCE after a few frames (to avoid spam)
+        if (!cameraStatusReported && renderCallCount > 60) {
+          debugLog(`━━━ CAMERA STATUS ━━━`);
+          debugLog(`getUserMedia: ${cameraVideo ? 'YES ✅' : 'NO'}`);
+          debugLog(`view.camera: ${!!view.camera ? 'YES' : 'NO'}`);
+          debugLog(
+            `getCameraImage: ${
+              typeof xrGLBinding.getCameraImage === 'function' ? 'YES' : 'NO'
+            }`,
+          );
+
+          if (cameraVideo) {
+            debugLog(`✅ Using getUserMedia video`);
+            debugLog(
+              `Video: ${cameraVideo.videoWidth}x${cameraVideo.videoHeight}`,
+            );
+          } else if (!view.camera) {
+            debugLog(`❌ No camera access`);
+            debugLog(`Captures will be black`);
+          } else if (typeof xrGLBinding.getCameraImage !== 'function') {
+            debugLog(`❌ getCameraImage() not supported`);
+            debugLog(`Captures will be black`);
+          }
+          debugLog(`━━━━━━━━━━━━━━━━━━`);
+
+          cameraStatusReported = true;
+          console.log('Full camera debug:', {
+            hasView: !!view,
+            hasCamera: !!view.camera,
+            hasCameraImage: !!view.cameraImage,
+            hasGetCameraImage: typeof xrGLBinding.getCameraImage === 'function',
+            xrGLBinding: xrGLBinding,
+          });
+        }
+
+        // Try to get camera image from view (silently, no spam)
+        if (view.camera && xrGLBinding.getCameraImage) {
+          cameraTexture = xrGLBinding.getCameraImage(view.camera);
+        } else if (view.cameraImage) {
+          cameraTexture = view.cameraImage;
+        }
+      }
+    } catch (err) {
+      if (!cameraStatusReported) {
+        console.error('Error getting camera image:', err);
+        debugLog(`❌ Camera error: ${err.message}`);
+        cameraStatusReported = true;
+      }
+    }
+  }
+
+  // Debug: Check hand status periodically (DISABLED - too spammy, hands are working now)
+  // const now = Date.now();
+  // if (now - lastHandDebugTime > 10000) {  // Reduced to every 10 seconds
+  //   if (currentSession) {
+  //     const sources = currentSession.inputSources;
+  //     let hasHands = sources.some(s => s.hand);
+  //     if (!hasHands) {
+  //       debugLog(`⚠️ No hands detected`);
+  //     }
+  //   }
+  //   lastHandDebugTime = now;
+  // }
 
   // Update frame visualization and capture
   // (Hand models update automatically via XRHandModelFactory)
@@ -1182,7 +1679,12 @@ async function startAR() {
   try {
     const sessionInit = {
       requiredFeatures: ['hand-tracking'],
-      optionalFeatures: ['local-floor', 'bounded-floor', 'layers'],
+      optionalFeatures: [
+        'local-floor',
+        'bounded-floor',
+        'layers',
+        'camera-access',
+      ],
     };
 
     console.log('Requesting XR session with:', sessionInit);
@@ -1234,6 +1736,52 @@ async function onSessionStarted(session) {
   session.addEventListener('end', onSessionEnded);
   await renderer.xr.setSession(session);
   currentSession = session;
+
+  // Initialize XRWebGLBinding for camera access
+  debugLog('🔍 Checking camera support...');
+  try {
+    console.log('Checking camera access support...');
+    console.log(
+      'XRWebGLBinding available:',
+      typeof XRWebGLBinding !== 'undefined',
+    );
+    console.log('Session enabled features:', session.enabledFeatures);
+
+    // Detailed feature check
+    const hasCameraAccess =
+      session.enabledFeatures &&
+      session.enabledFeatures.includes('camera-access');
+    debugLog(
+      `📷 Camera access feature: ${
+        hasCameraAccess ? 'ENABLED' : 'NOT ENABLED'
+      }`,
+    );
+    console.log('Has camera-access feature:', hasCameraAccess);
+
+    if (typeof XRWebGLBinding !== 'undefined') {
+      const gl = renderer.getContext();
+      xrGLBinding = new XRWebGLBinding(session, gl);
+      debugLog('📷 Camera binding created');
+      console.log('XRWebGLBinding:', xrGLBinding);
+      console.log(
+        'getCameraImage method available:',
+        typeof xrGLBinding.getCameraImage === 'function',
+      );
+      debugLog(
+        `getCameraImage: ${
+          typeof xrGLBinding.getCameraImage === 'function' ? 'YES' : 'NO'
+        }`,
+      );
+    } else {
+      debugLog('⚠️ XRWebGLBinding not supported');
+      console.warn(
+        'XRWebGLBinding not available - camera capture will not work',
+      );
+    }
+  } catch (err) {
+    console.error('Could not initialize camera access:', err);
+    debugLog(`⚠️ Camera init failed: ${err.message}`);
+  }
 
   // Check if hand tracking is actually available
   console.log('Input sources:', session.inputSources);

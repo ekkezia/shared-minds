@@ -113,7 +113,7 @@ const gyroDiv =
     el.style.fontFamily = 'monospace';
     el.style.fontSize = '12px';
     el.style.whiteSpace = 'pre';
-    el.style.display = 'none';
+    el.style.display = 'block';
     document.body.appendChild(el);
     return el;
   })();
@@ -204,7 +204,7 @@ function updateCameraFromGyro() {
 
   // Prevent sudden jumps: ignore changes > 30° between frames
   const delta = gamma - lastValidGamma;
-  if (Math.abs(delta) > 30) {
+  if (Math.abs(delta) > 10) {
     gamma = lastValidGamma; // keep previous stable value
   }
 
