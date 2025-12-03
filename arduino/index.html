@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>32x24 LED Grid Mapper</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load p5.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.3/p5.min.js"></script>
+    <style>
+      /* Ensure canvas is centered and responsive */
+      main {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100dvh
+        background-color: #f3f4f6;
+      }
+    </style>
+  </head>
+  <body class="bg-gray-100 font-sans">
+    <div class="container mx-auto p-4 flex flex-col items-center">
+      <h1 class="text-3xl font-extrabold text-gray-800 mb-4">
+        32x24 LED Grid Mapper
+      </h1>
+      <p class="text-gray-600 mb-6 text-center max-w-lg">
+        Click any cell below to toggle its state (White=0, Black=1). The full
+        32x24 array data is printed to the console on every click.
+      </p>
+
+      <!-- p5.js canvas will be injected here -->
+      <main
+        id="canvas-container"
+        class="rounded-lg shadow-xl overflow-hidden border-4 border-gray-300"
+      ></main>
+
+      <!-- NEW PATTERN INPUT SECTION -->
+      <div class="mt-8 p-4 bg-white rounded-lg shadow-xl max-w-xl w-full">
+        <h2 class="text-xl font-semibold text-gray-700 mb-2">
+          Load Custom Pattern (32x24)
+        </h2>
+        <textarea
+          id="pattern-input"
+          rows="8"
+          class="w-full p-2 border border-gray-300 rounded-lg font-mono text-xs resize-none focus:ring-blue-500 focus:border-blue-500"
+          placeholder="Paste your 32x24 binary pattern here (1 = ON, 0 = OFF)"
+        ></textarea>
+        <button
+          onclick="loadPattern()"
+          class="mt-3 w-full bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 transition duration-150 shadow-md"
+        >
+          Load Pattern into Grid
+        </button>
+        <p class="text-xs text-gray-500 mt-2">
+          The grid is initialized with your provided default pattern upon
+          loading.
+        </p>
+      </div>
+
+      <div class="mt-8 p-4 bg-white rounded-lg shadow-md max-w-xl w-full">
+        <h2 class="text-xl font-semibold text-gray-700 mb-2">Instructions:</h2>
+        <ul class="list-disc list-inside text-sm text-gray-600 space-y-1">
+          <li>Open your browser's Developer Tools (F12 or Cmd+Option+J).</li>
+          <li>Go to the **Console** tab.</li>
+          <li>Click a cell to toggle its color and log the data.</li>
+          <li>
+            The logged data shows the 2D array, which directly maps to your LED
+            state (0 = White/OFF, 1 = Black/ON).
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <script>
+      // --- Configuration Constants ---
+      const GRID_W = 32;
+      const GRID_H = 24;
+      const CELL_SIZE = 20; // 20 pixels per cell
+      const STRIP_HEIGHT = 8; // Height of each individual LED strip
+
+      let grid; // 2D array to hold the pixel state (0=White, 1=Black)
+
+      // --- DEFAULT PATTERN FROM USER QUERY ---
+      const DEFAULT_PATTERN = `00000000000000000000000000000000
+00000000000000000000000000000000
+00100000000000011111111001111110
+00100000001000010000000000000010
+00100000010000010000000000000010
+00100000100000010000000000000010
+00100001000000010000000000000010
+00100010000000010000000000000010
+00100100000000010000000000000010
+00101000000000010000000000000100
+00110000000000010000000000000100
+00110000000000011111100000000100
+00101000000000010000000000000100
+00100100000000010000000000000100
+00100010000000010000000000001000
+00100001000000010000000000010000
+00100000100000010000000000010000
+00100000010000010000000000010000
+00100000001000010000000000100000
+00100000000100010000000001000000
+00100000000000011111111001111110
+00000000000000000000000000000000
+00000000000000000000000000000000
+00000000000000000000000000000000`;
+
+      /**
+       * Parses the binary pattern string from the input field and updates the grid.
+       * @param {string} [defaultPattern=null] - Optional pattern string for initialization.
+       */
+      function loadPattern(defaultPattern = null) {
+        let patternText;
+        let inputElement = document.getElementById('pattern-input');
+
+        if (defaultPattern) {
+          patternText = defaultPattern;
+        } else if (inputElement) {
+          // Get text from the input field
+          patternText = inputElement.value;
+        } else {
+          console.error('Pattern input element not found.');
+          return;
+        }
+
+        // Clean: remove spaces and split into lines (rows)
+        const rows = patternText
+          .trim()
+          .split('\n')
+          .map((row) => row.trim().replace(/\s/g, ''))
+          .filter((row) => row.length > 0);
+
+        if (rows.length !== GRID_H) {
+          console.error(
+            `Error: Expected ${GRID_H} rows, found ${rows.length}. Grid not loaded.`,
+          );
+          return;
+        }
+
+        let newGrid = [];
+        let valid = true;
+
+        // Initialize newGrid structure (columns first)
+        for (let i = 0; i < GRID_W; i++) {
+          newGrid[i] = new Array(GRID_H);
+        }
+
+        // Parse data: iterate rows (j) and columns (i)
+        for (let j = 0; j < GRID_H; j++) {
+          const row = rows[j];
+          if (row.length !== GRID_W) {
+            console.error(
+              `Error: Row ${j} has length ${row.length}, expected ${GRID_W}. Grid not loaded.`,
+            );
+            valid = false;
+            break;
+          }
+
+          for (let i = 0; i < GRID_W; i++) {
+            const char = row[i];
+            const value = parseInt(char, 10);
+
+            if (value !== 0 && value !== 1) {
+              console.error(
+                `Error: Invalid character '${char}' at Row ${j}, Column ${i}. Only '0' or '1' allowed. Grid not loaded.`,
+              );
+              valid = false;
+              break;
+            }
+
+            // Set grid[column][row]
+            newGrid[i][j] = value;
+          }
+          if (!valid) break;
+        }
+
+        if (valid) {
+          grid = newGrid;
+          console.log('SUCCESS: Pattern loaded into grid.');
+          logGridState();
+        }
+      }
+
+      // --- P5.js Setup Function ---
+      function setup() {
+        // Create the canvas based on the grid dimensions
+        let canvas = createCanvas(GRID_W * CELL_SIZE, GRID_H * CELL_SIZE);
+        canvas.parent('canvas-container'); // Attach canvas to the container div
+
+        // Populate input field with default pattern
+        const inputElement = document.getElementById('pattern-input');
+        if (inputElement) {
+          inputElement.value = DEFAULT_PATTERN.trim();
+        }
+
+        // Initialize grid and load the default pattern immediately
+        grid = []; // Ensure grid is initialized before loadPattern runs
+        loadPattern(DEFAULT_PATTERN.trim());
+      }
+
+      // --- P5.js Draw Function (runs constantly) ---
+      function draw() {
+        background(240); // Light gray background
+
+        // Draw the grid cells and subtle borders
+        for (let i = 0; i < GRID_W; i++) {
+          for (let j = 0; j < GRID_H; j++) {
+            // Set subtle border for all cells
+            stroke(200);
+            strokeWeight(1);
+
+            // Determine color based on the state in the grid array
+            // The grid is indexed as grid[column][row] (i, j)
+            if (grid && grid[i] && grid[i][j] === 1) {
+              fill(0); // Black (ON)
+            } else {
+              fill(255); // White (OFF)
+            }
+
+            // Draw the square cell
+            rect(i * CELL_SIZE, j * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+          }
+        }
+
+        // --- Draw the thick boundary lines to simulate 3 LED strips (32x8 each) ---
+
+        // Use a darker, thicker stroke for the strip dividers
+        stroke(50);
+        strokeWeight(4);
+
+        // Line 1: After the first 32x8 strip (at Row 8)
+        // y = 8 rows * 20 pixels/row = 160
+        line(0, 8 * CELL_SIZE, width, 8 * CELL_SIZE);
+
+        // Line 2: After the second 32x8 strip (at Row 16)
+        // y = 16 rows * 20 pixels/row = 320
+        line(0, 16 * CELL_SIZE, width, 16 * CELL_SIZE);
+      }
+
+      // --- P5.js Mouse Click Handler ---
+      function mousePressed() {
+        // Check if the click is within the canvas bounds
+        if (mouseX >= 0 && mouseX < width && mouseY >= 0 && mouseY < height) {
+          // Calculate the grid column (i) and row (j) based on mouse coordinates
+          let i = floor(mouseX / CELL_SIZE);
+          let j = floor(mouseY / CELL_SIZE);
+
+          // Safety check against calculated indices
+          if (i >= 0 && i < GRID_W && j >= 0 && j < GRID_H) {
+            // Toggle the state: 1 -> 0, or 0 -> 1
+            grid[i][j] = 1 - grid[i][j];
+
+            // Log the new state of the entire grid to the console
+            logGridState();
+          }
+
+          // Critical fix: Return false ONLY when clicking inside the canvas
+          // to prevent the browser's default behavior (like selection) there.
+          return false;
+        }
+        // When clicking outside the canvas (on the text area or button),
+        // we return true or omit the return to allow the event to propagate
+        // and register with the HTML elements.
+        return true;
+      }
+
+      /**
+       * Logs the current 32x24 grid state to the console in a readable format,
+       * including a separate log for each of the three 32x8 LED strips, separated by "....",\n"...." per row.
+       */
+      function logGridState() {
+        console.log('-----------------------------------------');
+        console.log(
+          `Current 32x24 Pixel State (${GRID_H} rows, ${GRID_W} columns):`,
+        );
+
+        let fullOutput = '';
+        let stripRows = []; // Array to hold all 24 rows as strings
+
+        // 1. Generate all 24 rows and store them
+        for (let j = 0; j < GRID_H; j++) {
+          let row = [];
+          for (let i = 0; i < GRID_W; i++) {
+            // Readability: use '1' for black (ON) and '0' for white (OFF)
+            row.push(grid && grid[i] && grid[i][j] === 1 ? '1' : '0');
+          }
+          const rowString = row.join('');
+          fullOutput += rowString + '\n';
+
+          // Store the quoted string for strip output
+          stripRows.push(`"${rowString}"`);
+        }
+
+        // 2. Log the full 32x24 array (without quotes, raw text for input field usage)
+        console.log('--- FULL 32x24 ARRAY DATA (24 rows, no quotes) ---');
+        console.log(fullOutput);
+
+        // 3. Log the three 32x8 strips with "....", "....", format
+        console.log(
+          '--- 3 LED STRIPS (3x 8-row arrays, quoted and comma-separated) ---',
+        );
+
+        // Strip 1: Rows 0-7, joined by ",\n"
+        const strip1 = stripRows.slice(0, STRIP_HEIGHT).join(',\n');
+        console.log(`\n*** Strip 1 (Rows 0-7) ***\n${strip1}`);
+
+        // Strip 2: Rows 8-15, joined by ",\n"
+        const strip2 = stripRows
+          .slice(STRIP_HEIGHT, 2 * STRIP_HEIGHT)
+          .join(',\n');
+        console.log(`\n*** Strip 2 (Rows 8-15) ***\n${strip2}`);
+
+        // Strip 3: Rows 16-23, joined by ",\n"
+        const strip3 = stripRows
+          .slice(2 * STRIP_HEIGHT, 3 * STRIP_HEIGHT)
+          .join(',\n');
+        console.log(`\n*** Strip 3 (Rows 16-23) ***\n${strip3}`);
+
+        console.log('-----------------------------------------');
+      }
+    </script>
+  </body>
+</html>

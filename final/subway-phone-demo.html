@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Subway Phone - Demo Mode</title>
+    <style>
+      * {
+          margin: 0;
+          padding: 0;
+          box-sizing: border-box;
+      }
+
+      body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          background: #000;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          min-height: 100dvh
+          color: #fff;
+      }
+
+      .demo-banner {
+          position: fixed;
+          top: 20px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: rgba(255, 149, 0, 0.9);
+          padding: 10px 20px;
+          border-radius: 20px;
+          font-size: 14px;
+          z-index: 1000;
+      }
+
+      .phone-container {
+          width: 390px;
+          height: 844px;
+          background: linear-gradient(135deg, #2d1b3d 0%, #1a1a2e 100%);
+          border-radius: 50px;
+          padding: 20px;
+          box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+          position: relative;
+          overflow: hidden;
+      }
+
+      .notch {
+          position: absolute;
+          top: 0;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 180px;
+          height: 30px;
+          background: #000;
+          border-radius: 0 0 20px 20px;
+          z-index: 100;
+      }
+
+      .status-bar {
+          display: flex;
+          justify-content: space-between;
+          padding: 45px 20px 10px;
+          font-size: 14px;
+      }
+
+      .screen {
+          height: calc(100% - 65px);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+      }
+
+      .connection-status {
+          position: absolute;
+          top: 60px;
+          right: 20px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 15px;
+          background: rgba(0,0,0,0.5);
+          border-radius: 20px;
+          font-size: 12px;
+          z-index: 50;
+          cursor: pointer;
+      }
+
+      .connection-status:hover {
+          background: rgba(0,0,0,0.7);
+      }
+
+      .status-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          animation: pulse 2s infinite;
+      }
+
+      .status-dot.online {
+          background: #34C759;
+      }
+
+      .status-dot.offline {
+          background: #FF3B30;
+      }
+
+      @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+      }
+
+      .demo-content {
+          text-align: center;
+          max-width: 350px;
+      }
+
+      .demo-content h1 {
+          font-size: 32px;
+          margin-bottom: 20px;
+      }
+
+      .demo-content p {
+          color: #aaa;
+          line-height: 1.6;
+          margin-bottom: 30px;
+      }
+
+      .call-demo {
+          background: rgba(255,255,255,0.05);
+          border-radius: 20px;
+          padding: 30px;
+          margin: 20px 0;
+      }
+
+      .phone-number {
+          font-size: 36px;
+          font-weight: 300;
+          letter-spacing: 2px;
+          margin: 20px 0;
+      }
+
+      .status-indicator {
+          display: inline-flex;
+          align-items: center;
+          gap: 10px;
+          padding: 12px 24px;
+          border-radius: 25px;
+          font-size: 18px;
+          margin: 20px 0;
+          font-weight: 500;
+      }
+
+      .status-indicator.recording {
+          background: rgba(255, 149, 0, 0.2);
+          color: #FF9500;
+          border: 2px solid #FF9500;
+      }
+
+      .status-indicator.playing {
+          background: rgba(52, 199, 89, 0.2);
+          color: #34C759;
+          border: 2px solid #34C759;
+      }
+
+      .audio-visualizer {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          gap: 4px;
+          height: 60px;
+          margin: 20px 0;
+      }
+
+      .bar {
+          width: 4px;
+          background: rgba(255,255,255,0.3);
+          border-radius: 2px;
+          transition: height 0.2s;
+      }
+
+      .bar.active {
+          background: #34C759;
+      }
+
+      .message-log {
+          background: rgba(0,0,0,0.3);
+          border-radius: 15px;
+          padding: 20px;
+          margin: 20px 0;
+          max-height: 200px;
+          overflow-y: auto;
+          text-align: left;
+      }
+
+      .message {
+          padding: 8px 0;
+          font-size: 14px;
+          border-bottom: 1px solid rgba(255,255,255,0.1);
+      }
+
+      .message:last-child {
+          border-bottom: none;
+      }
+
+      .message.sent {
+          color: #FF9500;
+      }
+
+      .message.received {
+          color: #34C759;
+      }
+
+      .timestamp {
+          color: #666;
+          font-size: 11px;
+          margin-left: 10px;
+      }
+
+      .controls {
+          display: flex;
+          gap: 15px;
+          margin-top: 20px;
+      }
+
+      .btn {
+          padding: 12px 24px;
+          border-radius: 20px;
+          border: none;
+          cursor: pointer;
+          font-size: 16px;
+          font-weight: 500;
+          transition: all 0.2s;
+      }
+
+      .btn:hover {
+          transform: scale(1.05);
+      }
+
+      .btn-primary {
+          background: #34C759;
+          color: white;
+      }
+
+      .btn-secondary {
+          background: rgba(255,255,255,0.2);
+          color: white;
+      }
+
+      .explanation {
+          background: rgba(52, 199, 89, 0.1);
+          border-left: 3px solid #34C759;
+          padding: 15px;
+          margin: 20px 0;
+          border-radius: 5px;
+          text-align: left;
+          font-size: 14px;
+      }
+
+      .explanation h3 {
+          margin-bottom: 10px;
+          color: #34C759;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="demo-banner">
+      🎮 DEMO MODE - Click connection status to toggle online/offline
+    </div>
+
+    <div class="phone-container">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span id="statusTime">12:34</span>
+        <span>📶 🔋</span>
+      </div>
+      <div
+        class="connection-status"
+        id="connectionStatus"
+        onclick="toggleConnection()"
+      >
+        <span class="status-dot online" id="statusDot"></span>
+        <span id="statusText">Online</span>
+      </div>
+      <div class="screen">
+        <div class="demo-content">
+          <h1>🚇 Subway Phone</h1>
+          <p>Experience async calling designed for intermittent connectivity</p>
+
+          <div class="call-demo">
+            <div style="font-size: 14px; color: #888">Simulated Call With</div>
+            <div class="phone-number">555 867 5309</div>
+
+            <div class="status-indicator" id="callStatus">🎙️ Connecting...</div>
+
+            <div class="audio-visualizer" id="visualizer">
+              <!-- Bars will be added by JS -->
+            </div>
+
+            <div class="message-log" id="messageLog">
+              <div style="text-align: center; color: #666; font-size: 12px">
+                Message log will appear here
+              </div>
+            </div>
+          </div>
+
+          <div class="explanation">
+            <h3>How it works:</h3>
+            <p>
+              <strong>Online (Connecting...):</strong> Records your voice and
+              uploads to cloud
+            </p>
+            <p>
+              <strong>Offline (Connected):</strong> Plays back their recorded
+              messages
+            </p>
+            <p style="margin-top: 10px; font-size: 12px; color: #888">
+              Toggle connection status above to see the behavior change!
+            </p>
+          </div>
+
+          <div class="controls">
+            <button class="btn btn-secondary" onclick="resetDemo()">
+              Reset Demo
+            </button>
+            <button
+              class="btn btn-primary"
+              onclick="window.location.href='subway-phone.html'"
+            >
+              Try Full App
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let isOnline = true;
+      let messageCount = 0;
+      let simulationInterval = null;
+
+      // Initialize visualizer
+      function initVisualizer() {
+        const visualizer = document.getElementById('visualizer');
+        for (let i = 0; i < 12; i++) {
+          const bar = document.createElement('div');
+          bar.className = 'bar';
+          bar.style.height = Math.random() * 40 + 20 + 'px';
+          visualizer.appendChild(bar);
+        }
+      }
+
+      // Animate visualizer
+      function animateVisualizer() {
+        const bars = document.querySelectorAll('.bar');
+        bars.forEach((bar) => {
+          const height = Math.random() * 40 + 20;
+          bar.style.height = height + 'px';
+          bar.classList.toggle('active', height > 45);
+        });
+      }
+
+      // Toggle online/offline
+      function toggleConnection() {
+        isOnline = !isOnline;
+        updateUI();
+      }
+
+      // Update UI based on connection status
+      function updateUI() {
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const callStatus = document.getElementById('callStatus');
+
+        statusDot.className = isOnline
+          ? 'status-dot online'
+          : 'status-dot offline';
+        statusText.textContent = isOnline ? 'Online' : 'Offline';
+
+        if (isOnline) {
+          callStatus.className = 'status-indicator recording';
+          callStatus.innerHTML = '🎙️ Connecting...';
+        } else {
+          callStatus.className = 'status-indicator playing';
+          callStatus.innerHTML = '🔊 Connected';
+        }
+      }
+
+      // Simulate message exchange
+      function simulateMessage() {
+        const messageLog = document.getElementById('messageLog');
+        const now = new Date();
+        const time = now.toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        });
+
+        // Clear initial message
+        if (messageCount === 0) {
+          messageLog.innerHTML = '';
+        }
+
+        const message = document.createElement('div');
+        message.className = 'message';
+
+        if (isOnline) {
+          // Recording/uploading
+          message.classList.add('sent');
+          message.innerHTML = `
+                    📤 Recorded 5s audio chunk
+                    <span class="timestamp">${time}</span>
+                `;
+        } else {
+          // Playing received
+          message.classList.add('received');
+          message.innerHTML = `
+                    📥 Playing their message #${
+                      Math.floor(messageCount / 2) + 1
+                    }
+                    <span class="timestamp">${time}</span>
+                `;
+        }
+
+        messageLog.appendChild(message);
+        messageLog.scrollTop = messageLog.scrollHeight;
+        messageCount++;
+      }
+
+      // Start simulation
+      function startSimulation() {
+        // Animate visualizer
+        setInterval(animateVisualizer, 200);
+
+        // Simulate message exchange every 3 seconds
+        simulationInterval = setInterval(simulateMessage, 3000);
+
+        // Auto-toggle connection every 8 seconds to demonstrate behavior
+        setInterval(() => {
+          toggleConnection();
+          simulateMessage();
+        }, 8000);
+      }
+
+      // Reset demo
+      function resetDemo() {
+        messageCount = 0;
+        isOnline = true;
+        const messageLog = document.getElementById('messageLog');
+        messageLog.innerHTML = `
+                <div style="text-align: center; color: #666; font-size: 12px;">
+                    Message log will appear here
+                </div>
+            `;
+        updateUI();
+      }
+
+      // Update time
+      function updateTime() {
+        const now = new Date();
+        const hours = now.getHours().toString().padStart(2, '0');
+        const minutes = now.getMinutes().toString().padStart(2, '0');
+        document.getElementById(
+          'statusTime',
+        ).textContent = `${hours}:${minutes}`;
+      }
+
+      // Initialize
+      initVisualizer();
+      updateUI();
+      startSimulation();
+      setInterval(updateTime, 1000);
+      updateTime();
+
+      // Add initial message after 2 seconds
+      setTimeout(simulateMessage, 2000);
+    </script>
+  </body>
+</html>

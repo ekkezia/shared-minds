@@ -1,0 +1,2239 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Subway Phone - Async Calls</title>
+    <!-- Tone.js for DTMF/dial tones -->
+    <script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.min.js"></script>
+    <style>
+      /* iPhone-like visual styling */
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+          'Helvetica Neue', Arial, sans-serif;
+        background: linear-gradient(180deg, #0b0b0f 0%, #06060a 100%);
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100dvh;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      /* phone bezel */
+      .phone-container {
+        width: 40vw;
+        max-width: 420px;
+        height: 100dvh;
+        max-height: 720px;
+        background: linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.15),
+          rgba(255, 255, 255, 0.1)
+        );
+        border-radius: 44px;
+        padding: 18px;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7),
+          inset 0 1px 0 rgba(255, 255, 255, 0.02);
+        position: relative;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* full-bleed on small devices */
+      @media (max-width: 680px) {
+        .phone-container {
+          width: 100dvw;
+          min-width: 100dvw;
+          height: 100dvh;
+          max-height: 100dvh;
+          border-radius: 0;
+          padding: 12px;
+          box-shadow: none;
+        }
+      }
+
+      /* notch */
+      .notch {
+        position: absolute;
+        top: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 100px;
+        height: 28px;
+        background: rgba(0, 0, 0, 0.85);
+        border-radius: 14px;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+      }
+
+      /* status bar */
+      .status-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0 18px 12px;
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.9);
+        z-index: 10;
+      }
+
+      #statusTime {
+        font-weight: 600;
+        letter-spacing: 0.5px;
+      }
+
+      .screen {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 14px 18px 26px;
+        gap: 6px;
+      }
+
+      /* caller block */
+      .caller-info {
+        text-align: center;
+        padding-top: 36px;
+      }
+
+      .caller-name {
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.6);
+        margin-bottom: 6px;
+        letter-spacing: 0.6px;
+      }
+
+      .caller-number {
+        font-size: 40px;
+        font-weight: 600;
+        letter-spacing: 2px;
+        color: #fff;
+        margin-bottom: 6px;
+      }
+
+      .call-status {
+        font-size: 14px;
+        color: rgba(255, 255, 255, 0.7);
+      }
+
+      /* dial / number area */
+      .number-input {
+        font-size: 42px;
+        font-weight: 600;
+        text-align: center;
+        color: #fff;
+        padding: 8px 12px;
+        margin: 18px 0;
+        background: linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.02),
+          transparent
+        );
+        min-height: 64px;
+        border-radius: 14px;
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+      }
+
+      /* dialpad buttons - glassy */
+      .dialpad {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        padding: 0 6px;
+        justify-items: center;
+      }
+
+      .dial-btn {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.2);
+        border: 1px solid rgba(255, 255, 255, 0.04);
+        color: #fff;
+        font-size: 28px;
+        font-weight: 500;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: transform 120ms ease, background 120ms;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+      }
+
+      .dial-btn:hover {
+        transform: translateY(-4px);
+        background: rgba(255, 255, 255, 0.09);
+      }
+      .dial-btn:active {
+        transform: translateY(0);
+      }
+
+      .dial-btn .letters {
+        font-size: 10px;
+        color: rgba(255, 255, 255, 0.55);
+        margin-top: -4px;
+      }
+
+      /* call action buttons row */
+      .action-buttons {
+        display: flex;
+        justify-content: space-around;
+        align-items: center;
+        margin-top: 18px;
+        gap: 12px;
+      }
+
+      .call-action-btn {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        border: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6);
+        transition: transform 120ms ease;
+      }
+
+      .call-btn {
+        background: linear-gradient(180deg, #34c759, #16a34a);
+        box-shadow: 0 12px 36px rgba(52, 199, 89, 0.22);
+      }
+
+      .end-btn {
+        background: linear-gradient(180deg, #ff3b30, #e53935);
+        box-shadow: 0 12px 36px rgba(255, 59, 48, 0.22);
+      }
+
+      .cancel-btn {
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.04);
+      }
+
+      .icon {
+        width: 34px;
+        height: 34px;
+        fill: #fff;
+      }
+
+      /* bottom home indicator */
+      .home-indicator {
+        position: absolute;
+        bottom: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 134px;
+        height: 6px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6),
+          inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        z-index: 30;
+      }
+
+      /* connection status badge */
+      .connection-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background: rgba(255, 255, 255, 0.04);
+        border-radius: 14px;
+        font-size: 12px;
+        z-index: 40;
+        backdrop-filter: blur(6px);
+      }
+
+      .status-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+      }
+      .status-dot.online {
+        background: #34c759;
+      }
+      .status-dot.offline {
+        background: #ff3b30;
+      }
+
+      /* small tweaks for very small screens */
+      @media (max-width: 360px) {
+        .caller-number {
+          font-size: 34px;
+        }
+        .dial-btn {
+          width: 68px;
+          height: 68px;
+        }
+        .call-action-btn {
+          width: 72px;
+          height: 72px;
+        }
+        .home-indicator {
+          width: 110px;
+        }
+      }
+
+      /* Active/calling screen layout (iPhone-like) */
+      .dialer-screen {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-start;
+        height: 100%;
+      }
+
+      .caller-info {
+        text-align: center;
+        padding-top: 24px;
+        width: 100%;
+      }
+
+      .caller-name {
+        font-size: 14px;
+        color: rgba(255, 255, 255, 0.65);
+        margin-bottom: 6px;
+        letter-spacing: 0.6px;
+      }
+
+      .caller-number {
+        font-size: 36px;
+        font-weight: 700;
+        letter-spacing: 1.6px;
+        color: #fff;
+        margin-bottom: 6px;
+      }
+
+      .call-duration {
+        font-size: 15px;
+        color: rgba(255, 255, 255, 0.75);
+        margin-top: 4px;
+      }
+
+      /* Visualizer sits below caller info when active */
+      .audio-visualizer {
+        display: flex;
+        align-items: flex-end; /* anchor bars to bottom to avoid jitter */
+        justify-content: center;
+        gap: 6px;
+        width: 100%;
+        height: 84px; /* fixed visualizer height to stop layout jitter */
+        min-height: 56px;
+        max-height: 120px;
+        padding: 12px 0;
+        overflow: hidden;
+      }
+      .audio-visualizer .bar {
+        width: 6px;
+        background: linear-gradient(180deg, #fff, #bbb);
+        border-radius: 4px;
+        height: 28px; /* stable base height */
+        min-height: 6px;
+        transition: height 260ms ease; /* smooth transitions */
+        opacity: 0.95;
+      }
+
+      .call-controls {
+        display: flex;
+        gap: 18px;
+        justify-content: center;
+        align-items: center;
+        margin-top: 8px;
+      }
+
+      .control-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        background: transparent;
+        border: none;
+        color: #fff;
+      }
+      .control-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.06);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+      }
+      .control-label {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.75);
+      }
+
+      /* action-buttons: make end-call larger and centered */
+      .action-buttons {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 22px;
+        margin-top: 10px;
+      }
+      .call-action-btn.end-btn {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+      }
+
+      /* ensure small screens keep layout */
+      @media (max-width: 420px) {
+        .caller-number {
+          font-size: 32px;
+        }
+        .call-action-btn.end-btn {
+          width: 80px;
+          height: 80px;
+        }
+        .control-icon {
+          width: 48px;
+          height: 48px;
+          border-radius: 12px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="phone-container">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span id="statusTime">12:34</span>
+        <div class="connection-status" id="connectionStatus">
+          <span class="status-dot online" id="statusDot"></span>
+          <span id="statusText">Online</span>
+        </div>
+      </div>
+      <div class="screen" id="screen"></div>
+    </div>
+
+    <script type="module">
+      import { supabaseUrl, supabaseAnonKey } from './secret.js';
+
+      // Replace with the call id you want to sample, or set to null to skip
+      const sampleCallId = '8a46f49d-71c4-45c0-a699-1150e16f3385';
+
+      async function sampleAudioChunks(callId) {
+        if (!callId) {
+          console.log(
+            'No sampleCallId provided; skipping initial sample fetch.',
+          );
+          return;
+        }
+
+        if (location.protocol === 'file:') {
+          console.warn(
+            'Running from file:// — CORS will likely block requests. Serve the page over http(s).',
+          );
+        }
+
+        const url = `${supabaseUrl}/rest/v1/audio_chunks?select=*&call_id=eq.${encodeURIComponent(
+          callId,
+        )}&order=timestamp.asc`;
+
+        try {
+          const res = await fetch(url, {
+            method: 'GET',
+            headers: {
+              apikey: supabaseAnonKey,
+              Authorization: `Bearer ${supabaseAnonKey}`,
+              Accept: 'application/json',
+            },
+          });
+
+          console.log('REST fetch status:', res.status, res.statusText);
+          const json = await res.json().catch(() => null);
+          console.log(
+            'Fetched rows:',
+            Array.isArray(json) ? json.length : json,
+          );
+
+          if (Array.isArray(json) && json.length) {
+            console.log('First row sample:', json[0]);
+            // quick reachability check for first row url/file_path if present
+            const first = json[0];
+            const testUrl =
+              first.url ||
+              (first.file_path
+                ? `${supabaseUrl.replace(
+                    '.supabase.co',
+                    '.supabase.co/storage/v1/object/public/call-audio',
+                  )}/${first.file_path}`
+                : null);
+            if (testUrl) {
+              try {
+                const head = await fetch(testUrl, { method: 'HEAD' });
+                console.log('File HEAD', testUrl, head.status, head.ok);
+              } catch (err) {
+                console.warn('File HEAD failed (CORS/network):', err);
+              }
+            }
+          } else {
+            console.log('No audio_chunks rows returned for call:', callId);
+          }
+        } catch (err) {
+          console.error('Sample fetch error:', err);
+        }
+      }
+
+      // run on init
+      sampleAudioChunks(sampleCallId);
+    </script>
+
+    <script type="module">
+      // Supabase configuration - REPLACE WITH YOUR OWN
+      import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+
+      export const supabaseUrl = 'https://uqejfbljzcwonhspvtgr.supabase.co';
+      export const supabaseAnonKey =
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxZWpmYmxqemN3b25oc3B2dGdyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQxNDMwOTUsImV4cCI6MjA3OTcxOTA5NX0.y9hyi8qOdBUwlIqTQf9_HxCg7UqkyUv7rMWxeb6UTfo';
+
+      let supabase;
+      let myPhoneNumber = sessionStorage.getItem('myPhoneNumber');
+      let currentCall = null;
+      let isOnline = navigator.onLine;
+      let mediaRecorder = null;
+      let audioChunks = [];
+      let recordingInterval = null;
+      let playbackQueue = [];
+      let currentAudio = null;
+      let callSubscription = null;
+      let audioSubscription = null;
+      let prefetchInterval = null; // <--- new
+      let visualizerInterval = null;
+      // Add near the top level state declarations (after audioSubscription etc.)
+      const AUDIO_CACHE = 'audio-chunks-cache';
+      let playedChunkIds = new Set();
+      const AUTO_PLAY_UPLOADED = true;
+      // track ack counts from peers
+      let chunkAckCounts = {};
+
+      // --- IndexedDB helpers (store blobs by URL) ---
+      const IDB_DB = 'subway-audio-db';
+      const IDB_STORE = 'chunks';
+      // basic IDB helpers: open, put blob, get blob URL
+      function idbOpen() {
+        return new Promise((resolve, reject) => {
+          const req = indexedDB.open(IDB_DB, 1);
+          req.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(IDB_STORE)) {
+              db.createObjectStore(IDB_STORE, { keyPath: 'key' });
+            }
+          };
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error);
+        });
+      }
+
+      async function idbPutBlob(key, blob, meta = {}) {
+        if (!key) return false;
+        try {
+          const db = await idbOpen();
+          const tx = db.transaction(IDB_STORE, 'readwrite');
+          const store = tx.objectStore(IDB_STORE);
+          await new Promise((res, rej) => {
+            const r = store.put({ key, blob, meta, savedAt: Date.now() });
+            r.onsuccess = () => res(r.result);
+            r.onerror = () => rej(r.error);
+          });
+          tx.oncomplete = () => db.close();
+          return true;
+        } catch (e) {
+          console.warn('IDB put error:', e);
+          return false;
+        }
+      }
+
+      async function idbGetBlobUrl(key) {
+        if (!key) return null;
+        try {
+          const db = await idbOpen();
+          const tx = db.transaction(IDB_STORE, 'readonly');
+          const store = tx.objectStore(IDB_STORE);
+          const row = await new Promise((res, rej) => {
+            const r = store.get(key);
+            r.onsuccess = () => res(r.result);
+            r.onerror = () => rej(r.error);
+          });
+          tx.oncomplete = () => db.close();
+          if (!row || !row.blob) return null;
+          const blobUrl = URL.createObjectURL(row.blob);
+          return blobUrl;
+        } catch (e) {
+          console.warn('IDB get error:', e);
+          return null;
+        }
+      }
+      // ---- DTMF dial tone (Tone.js) ----
+      let _toneStarted = false;
+      const DTMF = {
+        1: [697, 1209],
+        2: [697, 1336],
+        3: [697, 1477],
+        4: [770, 1209],
+        5: [770, 1336],
+        6: [770, 1477],
+        7: [852, 1209],
+        8: [852, 1336],
+        9: [852, 1477],
+        '*': [941, 1209],
+        0: [941, 1336],
+        '#': [941, 1477],
+      };
+
+      async function ensureTone() {
+        if (_toneStarted) return;
+        try {
+          await Tone.start(); // user gesture required on some browsers
+        } catch (e) {
+          // ignore; browsers may require user interaction anyway
+        }
+        _toneStarted = true;
+      }
+
+      // Play short DTMF tone for a digit (duration seconds)
+      async function playDTMFTone(digit, duration = 0.18) {
+        const freqs = DTMF[String(digit)];
+        if (!freqs) return;
+        await ensureTone();
+        const gain = new Tone.Gain(0.12).toDestination();
+        const o1 = new Tone.Oscillator(freqs[0], 'sine').connect(gain).start();
+        const o2 = new Tone.Oscillator(freqs[1], 'sine').connect(gain).start();
+        setTimeout(() => {
+          try {
+            o1.stop();
+            o2.stop();
+            o1.dispose();
+            o2.dispose();
+            gain.dispose();
+          } catch (e) {}
+        }, Math.max(50, duration * 1000));
+      }
+
+      // --- end IndexedDB helpers ---
+
+      // Broadcast listener -> try to cache and enqueue playable blob URL immediately
+      // Defined early so it can be called right after supabase init.
+      function setupBroadcastListener() {
+        if (!supabase) return;
+        try {
+          const notifyChannel = supabase
+            .channel('audio-notify')
+            .on('broadcast', { event: 'new-audio' }, async (msg) => {
+              console.log('Broadcast received:', msg);
+              const payload = msg.payload || {};
+              if (
+                payload.call_id &&
+                appState.activeCall &&
+                payload.call_id === currentCall
+              ) {
+                console.log(
+                  'Broadcast matches current call — attempting immediate cache:',
+                  payload,
+                );
+                if (payload.url) {
+                  try {
+                    const cached = await cacheAudioUrl(payload.url);
+                    console.log(
+                      'cacheAudioUrl result (broadcast):',
+                      payload.chunk_id,
+                      cached,
+                    );
+                    const playable = await resolvePlayableUrl(payload.url);
+                    if (playable) {
+                      console.log(
+                        'Broadcast resolved playable URL, enqueueing:',
+                        payload.chunk_id,
+                      );
+                      if (!playedChunkIds.has(payload.chunk_id)) {
+                        playedChunkIds.add(payload.chunk_id);
+                        playbackQueue.push({
+                          id: payload.chunk_id,
+                          url: playable,
+                        });
+                      }
+                    } else {
+                      console.log(
+                        'Broadcast: playable not yet resolved for',
+                        payload.chunk_id,
+                      );
+                    }
+                    // send cache-ack back (best-effort)
+                    try {
+                      await supabase.channel('audio-notify').send({
+                        type: 'broadcast',
+                        event: 'cache-ack',
+                        payload: {
+                          call_id: payload.call_id,
+                          chunk_id: payload.chunk_id,
+                          cached_by: myPhoneNumber,
+                        },
+                      });
+                      console.log('Sent cache-ack for', payload.chunk_id);
+                    } catch (e) {
+                      console.warn('Failed to send cache-ack (non-fatal):', e);
+                    }
+                  } catch (e) {
+                    console.warn('Broadcast handler cache error:', e);
+                  }
+                } else {
+                  prefetchAudioChunks().catch((e) =>
+                    console.warn('prefetch from broadcast failed', e),
+                  );
+                }
+              }
+            })
+            .on('broadcast', { event: 'cache-ack' }, (msg) => {
+              const p = msg.payload || {};
+              if (p.chunk_id) {
+                chunkAckCounts[p.chunk_id] =
+                  (chunkAckCounts[p.chunk_id] || 0) + 1;
+                console.log(
+                  'Received cache-ack for',
+                  p.chunk_id,
+                  'from',
+                  p.cached_by,
+                  'total:',
+                  chunkAckCounts[p.chunk_id],
+                );
+              }
+            })
+            .subscribe((status) => {
+              console.log('Broadcast channel status:', status);
+            });
+        } catch (e) {
+          console.warn('setupBroadcastListener error', e);
+        }
+      }
+
+      // helper: cache a URL response (IDB-only now)
+      async function cacheAudioUrl(url) {
+        if (!url) return false;
+        try {
+          const resp = await fetch(url, { method: 'GET' });
+          if (!resp || !resp.ok) {
+            console.warn(
+              'cacheAudioUrl: network fetch failed',
+              resp && resp.status,
+              url,
+            );
+            return false;
+          }
+          const blob = await resp.blob();
+          const ok = await idbPutBlob(url, blob);
+          console.log('IDB cached audio URL:', url, ok);
+          return ok;
+        } catch (err) {
+          console.warn('cacheAudioUrl error:', err, url);
+          return false;
+        }
+      }
+
+      // get cached blob URL from IDB (returns a blob: URL) — caller must revoke after finished
+      async function getCachedBlobUrl(url) {
+        if (!url) return null;
+        try {
+          const blobUrl = await idbGetBlobUrl(url);
+          return blobUrl;
+        } catch (e) {
+          console.warn('getCachedBlobUrl IDB failed:', e, url);
+          return null;
+        }
+      }
+
+      // resolvePlayableUrl: prefer IDB cached blob, otherwise fetch+store into IDB and return blob URL
+      async function resolvePlayableUrl(url) {
+        if (!url) return null;
+        try {
+          // IDB first (durable)
+          const cached = await idbGetBlobUrl(url);
+          if (cached) return cached;
+
+          // if online, fetch and store in IDB then return blob URL
+          if (navigator.onLine) {
+            const resp = await fetch(url, { method: 'GET' });
+            if (!resp || !resp.ok) {
+              console.warn(
+                'resolvePlayableUrl: network fetch failed',
+                resp && resp.status,
+                url,
+              );
+              return null;
+            }
+            const blob = await resp.blob();
+            await idbPutBlob(url, blob);
+            const blobUrl = URL.createObjectURL(blob);
+            console.log('Fetched+IDB stored audio, returning blobUrl for', url);
+            return blobUrl;
+          }
+
+          // offline and not cached
+          return null;
+        } catch (err) {
+          console.warn('resolvePlayableUrl error:', err, url);
+          return null;
+        }
+      }
+
+      // Prefetching: fetch and cache audio chunks proactively while online
+      async function prefetchAudioChunks() {
+        if (!supabase || !currentCall || !appState.activeCall) return;
+        if (!navigator.onLine) {
+          console.log('prefetchAudioChunks skipped - offline');
+          return;
+        }
+
+        console.log('Prefetching audio chunks for call:', currentCall);
+
+        try {
+          const { data, error } = await supabase
+            .from('audio_chunks')
+            .select('*')
+            .eq('call_id', currentCall)
+            .order('timestamp', { ascending: true });
+
+          if (error) {
+            console.warn('Prefetch fetch error:', error);
+            return;
+          }
+          if (!data || data.length === 0) {
+            console.log('Prefetch: no audio chunks found');
+            return;
+          }
+
+          for (const chunk of data) {
+            if (chunk.from_number === myPhoneNumber) continue;
+            if (playedChunkIds.has(chunk.id)) continue;
+
+            console.log(
+              'Prefetch - resolving/caching chunk:',
+              chunk.id,
+              chunk.url,
+            );
+            const playable = await resolvePlayableUrl(chunk.url);
+
+            if (playable) {
+              console.log('Prefetch cached/resolved chunk:', chunk.id);
+              playedChunkIds.add(chunk.id);
+              playbackQueue.push({ id: chunk.id, url: playable });
+            } else {
+              console.log(
+                'Prefetch could not resolve now, will try later for chunk:',
+                chunk.id,
+              );
+            }
+          }
+
+          console.log('Prefetch complete. queue length:', playbackQueue.length);
+        } catch (err) {
+          console.error('prefetchAudioChunks error:', err);
+        }
+      }
+
+      // start/stop helpers for prefetching
+      function startPrefetching() {
+        if (prefetchInterval) return;
+        prefetchAudioChunks().catch((e) =>
+          console.warn('prefetch initial error', e),
+        );
+        prefetchInterval = setInterval(() => {
+          if (navigator.onLine && appState.activeCall && currentCall) {
+            prefetchAudioChunks().catch((e) =>
+              console.warn('prefetch interval error', e),
+            );
+          }
+        }, 5000);
+        console.log('Started prefetch interval');
+      }
+
+      function stopPrefetching() {
+        if (!prefetchInterval) return;
+        clearInterval(prefetchInterval);
+        prefetchInterval = null;
+        console.log('Stopped prefetch interval');
+      }
+
+      // Try to initialize Supabase
+      try {
+        if (supabaseUrl && supabaseAnonKey) {
+          supabase = createClient(supabaseUrl, supabaseAnonKey);
+          console.log('Supabase initialized');
+          // safe attempt to attach broadcast listener now that client exists
+          try {
+            setupBroadcastListener();
+          } catch (e) {
+            console.warn('setupBroadcastListener not available yet', e);
+          }
+        } else {
+          console.log('Supabase not configured - missing URL or anon key');
+        }
+      } catch (e) {
+        console.error('Supabase initialization failed:', e);
+      }
+
+      // App State — skip "get my number" flow, go straight to dialer
+      let appState = {
+        screen: 'dialer',
+        dialedNumber: '',
+        incomingCall: null,
+        activeCall: null,
+      };
+
+      // ensure we have a phone number (from sessionStorage or generate one)
+      if (!myPhoneNumber) {
+        myPhoneNumber =
+          sessionStorage.getItem('myPhoneNumber') || generatePhoneNumber();
+        sessionStorage.setItem('myPhoneNumber', myPhoneNumber);
+        console.log('Auto-assigned phone number:', myPhoneNumber);
+      } else {
+        // re-sync stored value
+        sessionStorage.setItem('myPhoneNumber', myPhoneNumber);
+      }
+
+      // Register the user with Supabase (if configured) and start incoming call listener
+      async function ensureRegisteredAndListened() {
+        if (!supabase) {
+          console.warn(
+            'Supabase not initialized; running in demo mode. Showing dialer only.',
+          );
+          render();
+          return;
+        }
+
+        try {
+          const { error } = await supabase.from('users').upsert(
+            {
+              phone_number: myPhoneNumber,
+              online: isOnline,
+              last_seen: new Date().toISOString(),
+              created_at: new Date().toISOString(),
+            },
+            { onConflict: 'phone_number' },
+          );
+
+          if (error) {
+            console.warn('User upsert warning:', error);
+          } else {
+            console.log('User registered/ensured:', myPhoneNumber);
+          }
+
+          // start listening for incoming calls immediately
+          try {
+            listenForIncomingCalls();
+            console.log('Incoming call listener started for:', myPhoneNumber);
+          } catch (e) {
+            console.warn('listenForIncomingCalls error:', e);
+          }
+        } catch (e) {
+          console.warn('ensureRegisteredAndListened error:', e);
+        } finally {
+          appState.screen = 'dialer';
+          render();
+        }
+      }
+
+      // run registration/listener setup
+      ensureRegisteredAndListened();
+
+      // Generate random 10-digit phone number
+      function generatePhoneNumber() {
+        let number = '';
+        for (let i = 0; i < 10; i++) {
+          number += Math.floor(Math.random() * 10);
+        }
+        return number;
+      }
+
+      // Format phone number for display
+      function formatPhoneNumber(number) {
+        if (number.length === 10) {
+          return `${number.slice(0, 3)} ${number.slice(3, 6)} ${number.slice(
+            6,
+          )}`;
+        }
+        return number;
+      }
+
+      // Setup Screen
+      function renderSetupScreen() {
+        const screen = document.getElementById('screen');
+        screen.innerHTML = `
+                <div class="setup-screen">
+                    <h1>🚇 Subway Phone</h1>
+                    <p>Make calls in the subway with intermittent connectivity. Record when online, listen when offline.</p>
+                    <div id="setupContent">
+                        <button class="btn-primary" onclick="window.generateNumber()">Get My Number</button>
+                    </div>
+                </div>
+            `;
+      }
+
+      // Generate and register phone number
+      window.generateNumber = async function () {
+        const newNumber = generatePhoneNumber();
+        const setupContent = document.getElementById('setupContent');
+        setupContent.innerHTML = `
+                <div class="phone-number-display">${formatPhoneNumber(
+                  newNumber,
+                )}</div>
+                <p style="color: #888;">This is your phone number</p>
+                <button class="btn-primary" onclick="window.confirmNumber('${newNumber}')">Continue</button>
+            `;
+      };
+
+      window.confirmNumber = async function (number) {
+        myPhoneNumber = number;
+        sessionStorage.setItem('myPhoneNumber', number);
+
+        console.log('Registering user:', number);
+
+        // Register in Supabase with timestamp
+        if (supabase) {
+          try {
+            const { data, error } = await supabase.from('users').upsert(
+              {
+                phone_number: number,
+                online: true,
+                last_seen: new Date().toISOString(),
+                created_at: new Date().toISOString(),
+              },
+              {
+                onConflict: 'phone_number',
+              },
+            );
+
+            if (error) {
+              console.error('Error registering user:', error);
+              alert('Failed to register user: ' + error.message);
+              return;
+            }
+
+            console.log('User registered successfully:', number);
+
+            // Listen for incoming calls
+            listenForIncomingCalls();
+          } catch (e) {
+            console.error('Exception registering user:', e);
+            alert('Failed to register: ' + e.message);
+            return;
+          }
+        } else {
+          console.error('Supabase not initialized!');
+          alert('Supabase not configured. Please check your credentials.');
+          return;
+        }
+
+        appState.screen = 'dialer';
+        render();
+      };
+
+      // Listen for incoming calls using Realtime
+      function listenForIncomingCalls() {
+        if (!supabase) return;
+
+        console.log('Setting up incoming call listener for:', myPhoneNumber);
+
+        // unsubscribe previous if any
+        try {
+          if (callSubscription) callSubscription.unsubscribe();
+        } catch (e) {}
+
+        callSubscription = supabase
+          .channel('incoming-calls-' + myPhoneNumber)
+          .on(
+            'postgres_changes',
+            {
+              // listen only for new calls
+              event: 'INSERT',
+              schema: 'public',
+              table: 'calls',
+              filter: `to_number=eq.${myPhoneNumber}`,
+            },
+            (payload) => {
+              console.log('Received call event:', payload);
+              const call = payload.new;
+
+              if (call && call.status === 'ringing' && !appState.activeCall) {
+                console.log('Incoming call from:', call.from_number);
+                appState.incomingCall = call;
+                appState.screen = 'incoming';
+                render();
+              }
+            },
+          )
+          .subscribe((status) => {
+            console.log('Incoming call subscription status:', status);
+          });
+      }
+
+      // Dialer Screen
+      function renderDialerScreen() {
+        const screen = document.getElementById('screen');
+        screen.innerHTML = `
+                <div class="dialer-screen">
+                    <div style="text-align: center;">
+                        <div style="font-size: 14px; color: #888;">My Number</div>
+                        <div style="font-size: 24px; margin-top: 5px;">${formatPhoneNumber(
+                          myPhoneNumber,
+                        )}</div>
+                        <button onclick="window.getNewNumber()" style="background: rgba(255,255,255,0.1); border: none; color: #888; padding: 5px 15px; border-radius: 15px; font-size: 12px; cursor: pointer; margin-top: 5px;">Get New Number</button>
+                    </div>
+                    <div class="number-input" id="numberInput">${formatPhoneNumber(
+                      appState.dialedNumber,
+                    )}</div>
+                    <div class="dialpad">
+                        ${[1, 2, 3, 4, 5, 6, 7, 8, 9, '*', 0, '#']
+                          .map(
+                            (n) => `
+                            <button class="dial-btn" onclick="window.dialPad('${n}')">
+                                <span>${n}</span>
+                                ${
+                                  typeof n === 'number' && n > 0
+                                    ? `<span class="letters">${getLetters(
+                                        n,
+                                      )}</span>`
+                                    : ''
+                                }
+                            </button>
+                        `,
+                          )
+                          .join('')}
+                    </div>
+                    <div class="action-buttons">
+                        <div style="width: 70px;"></div>
+                        <button class="call-action-btn call-btn" onclick="window.makeCall()">
+                            <svg class="icon" viewBox="0 0 24 24"><path fill="white" d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg>
+                        </button>
+                        <button class="call-action-btn cancel-btn" onclick="window.deleteDigit()" aria-label="Delete">
+                            <svg class="icon" viewBox="0 0 24 24"><path fill="white" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                        </button>
+                    </div>
+                </div>
+            `;
+      }
+
+      // Get new phone number
+      window.getNewNumber = function () {
+        if (
+          confirm(
+            'Get a new phone number? Your current number will be deleted.',
+          )
+        ) {
+          sessionStorage.removeItem('myPhoneNumber');
+          myPhoneNumber = null;
+          appState.screen = 'setup';
+          render();
+        }
+      };
+
+      // Clean up old users (24 hours+)
+      async function cleanupOldUsers() {
+        if (!supabase) return;
+
+        try {
+          const twentyFourHoursAgo = new Date(
+            Date.now() - 24 * 60 * 60 * 1000,
+          ).toISOString();
+
+          // Get old users
+          const { data: oldUsers, error: fetchError } = await supabase
+            .from('users')
+            .select('phone_number')
+            .lt('created_at', twentyFourHoursAgo);
+
+          if (fetchError) {
+            console.error('Error fetching old users:', fetchError);
+            return;
+          }
+
+          if (oldUsers && oldUsers.length > 0) {
+            console.log(`Found ${oldUsers.length} users older than 24 hours`);
+
+            // Delete old calls associated with these users
+            for (const user of oldUsers) {
+              // Delete calls where they're involved
+              await supabase
+                .from('calls')
+                .delete()
+                .or(
+                  `from_number.eq.${user.phone_number},to_number.eq.${user.phone_number}`,
+                );
+            }
+
+            // Delete old users
+            const { error: deleteError } = await supabase
+              .from('users')
+              .delete()
+              .lt('created_at', twentyFourHoursAgo);
+
+            if (deleteError) {
+              console.error('Error deleting old users:', deleteError);
+            } else {
+              console.log(`Cleaned up ${oldUsers.length} old users`);
+            }
+          }
+        } catch (e) {
+          console.error('Error in cleanup:', e);
+        }
+      }
+
+      function getLetters(num) {
+        const letters = [
+          '',
+          '',
+          'ABC',
+          'DEF',
+          'GHI',
+          'JKL',
+          'MNO',
+          'PQRS',
+          'TUV',
+          'WXYZ',
+        ];
+        return letters[num] || '';
+      }
+
+      window.dialPad = function (digit) {
+        if (appState.dialedNumber.length < 10) {
+          appState.dialedNumber += digit;
+          // play dial tone for feedback
+          try {
+            playDTMFTone(digit);
+          } catch (e) {}
+          render();
+        }
+      };
+
+      window.deleteDigit = function () {
+        appState.dialedNumber = appState.dialedNumber.slice(0, -1);
+        render();
+      };
+
+      window.makeCall = async function () {
+        if (appState.dialedNumber.length !== 10) {
+          alert('Please enter a 10-digit phone number');
+          return;
+        }
+
+        console.log(
+          'Making call from',
+          myPhoneNumber,
+          'to',
+          appState.dialedNumber,
+        );
+
+        if (supabase) {
+          try {
+            // Ensure caller is registered first
+            console.log('Ensuring caller is registered...');
+            await supabase.from('users').upsert(
+              {
+                phone_number: myPhoneNumber,
+                online: true,
+                last_seen: new Date().toISOString(),
+              },
+              {
+                onConflict: 'phone_number',
+              },
+            );
+
+            // Create the call
+            const { data, error } = await supabase
+              .from('calls')
+              .insert({
+                from_number: myPhoneNumber,
+                to_number: appState.dialedNumber,
+                status: 'ringing',
+                created_at: new Date().toISOString(),
+              })
+              .select()
+              .single();
+
+            if (error) {
+              console.error('Error creating call:', error);
+              alert(
+                'Failed to create call: ' +
+                  error.message +
+                  '\n\nCheck console for details.',
+              );
+              throw error;
+            }
+
+            console.log('Call created successfully:', data);
+
+            currentCall = data.id;
+            appState.activeCall = {
+              id: currentCall,
+              number: appState.dialedNumber,
+              status: 'calling',
+            };
+            appState.screen = 'calling';
+            render();
+
+            // Listen for call acceptance
+            listenForCallUpdates(currentCall);
+          } catch (e) {
+            console.error('Error making call:', e);
+          }
+        } else {
+          alert('Supabase not configured. Please add your credentials.');
+        }
+      };
+
+      // Listen for call updates
+      function listenForCallUpdates(callId) {
+        if (!supabase) return;
+
+        console.log('Listening for call updates on call:', callId);
+
+        const channel = supabase
+          .channel(`call-updates-${callId}`)
+          .on(
+            'postgres_changes',
+            {
+              event: 'UPDATE',
+              schema: 'public',
+              table: 'calls',
+              filter: `id=eq.${callId}`,
+            },
+            (payload) => {
+              console.log('Call update received:', payload);
+              if (payload.new.status === 'active') {
+                console.log('Call accepted! Starting recording...');
+                appState.activeCall.status = 'active';
+                appState.screen = 'active';
+                startRecording();
+                listenForAudio();
+                startPrefetching();
+                render();
+              } else if (payload.new.status === 'ended') {
+                console.log('Call ended by other person');
+                // The other person ended the call
+                stopRecording();
+                if (callSubscription) callSubscription.unsubscribe();
+                if (audioSubscription) audioSubscription.unsubscribe();
+                channel.unsubscribe();
+                currentCall = null;
+                appState.activeCall = null;
+                appState.dialedNumber = '';
+                appState.screen = 'dialer';
+                alert('Call ended by other person');
+                render();
+              }
+            },
+          )
+          .subscribe((status) => {
+            console.log('Call update subscription status:', status);
+          });
+      }
+
+      // Incoming Call Screen
+      function renderIncomingScreen() {
+        const screen = document.getElementById('screen');
+        const call = appState.incomingCall;
+        screen.innerHTML = `
+                <div class="dialer-screen">
+                    <div class="caller-info">
+                        <div class="caller-name">Subway Call</div>
+                        <div class="caller-number">${formatPhoneNumber(
+                          call.from_number,
+                        )}</div>
+                        <div class="call-status">incoming call...</div>
+                    </div>
+                    <div class="action-buttons" style="margin-top: auto;">
+                        <button class="call-action-btn cancel-btn" onclick="window.rejectCall()">
+                            <svg class="icon" viewBox="0 0 24 24"><path fill="white" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                        </button>
+                        <button class="call-action-btn call-btn" onclick="window.acceptCall()">
+                            <svg class="icon" viewBox="0 0 24 24"><path fill="white" d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg>
+                        </button>
+                    </div>
+                </div>
+            `;
+      }
+
+      window.acceptCall = async function () {
+        const call = appState.incomingCall;
+        if (supabase) {
+          try {
+            await supabase
+              .from('calls')
+              .update({
+                status: 'active',
+                accepted_at: new Date().toISOString(),
+              })
+              .eq('id', call.id);
+          } catch (e) {
+            console.log('Demo mode accept:', e);
+          }
+        }
+
+        currentCall = call.id;
+        appState.activeCall = {
+          id: call.id,
+          number: call.from_number,
+          status: 'active',
+        };
+        appState.screen = 'active';
+        appState.incomingCall = null;
+        startRecording();
+        listenForAudio();
+        startPrefetching(); // <-- start prefetching while we're online
+
+        // Listen for call end from the other person
+        listenForCallUpdates(call.id);
+
+        render();
+      };
+
+      window.rejectCall = async function () {
+        const call = appState.incomingCall;
+        if (supabase) {
+          try {
+            await supabase
+              .from('calls')
+              .update({ status: 'rejected' })
+              .eq('id', call.id);
+          } catch (e) {
+            console.log('Demo mode reject:', e);
+          }
+        }
+        appState.incomingCall = null;
+        appState.screen = 'dialer';
+        render();
+      };
+
+      // Active Call Screen
+      function renderActiveCallScreen() {
+        const screen = document.getElementById('screen');
+        const call = appState.activeCall;
+        const connectionText = isOnline ? 'Connecting...' : 'Connected';
+        const connectionColor = isOnline ? '#FF9500' : '#34C759';
+
+        screen.innerHTML = `
+                <div class="dialer-screen">
+                    <div class="caller-info">
+                        <div class="caller-name">Subway Call</div>
+                        <div class="caller-number">${formatPhoneNumber(
+                          call.number,
+                        )}</div>
+                        <div class="call-status" style="color: ${connectionColor};">${connectionText}</div>
+                        ${
+                          isOnline
+                            ? '<div style="font-size: 12px; color: #888; margin-top: 5px;">Recording your voice...</div>'
+                            : '<div style="font-size: 12px; color: #888; margin-top: 5px;">Playing their voice...</div>'
+                        }
+                    </div>
+                    <div class="audio-visualizer" id="visualizer">
+                        ${Array(12)
+                          .fill(0)
+                          .map(() => `<div class="bar"></div>`)
+                          .join('')}
+                    </div>
+                    <div class="call-controls">
+                        <button class="control-btn">
+                            <div class="control-icon">
+                                <svg width="24" height="24" viewBox="0 0 24 24"><path fill="white" d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/></svg>
+                            </div>
+                            <span class="control-label">mute</span>
+                        </button>
+                        <button class="control-btn">
+                            <div class="control-icon">
+                                <svg width="24" height="24" viewBox="0 0 24 24"><path fill="white" d="M11.5 2C6.81 2 3 5.81 3 10.5S6.81 19 11.5 19h.5v3c4.86-2.34 8-7 8-11.5C20 5.81 16.19 2 11.5 2z"/></svg>
+                            </div>
+                            <span class="control-label">keypad</span>
+                        </button>
+                        <button class="control-btn">
+                            <div class="control-icon">
+                                <svg width="24" height="24" viewBox="0 0 24 24"><path fill="white" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+                            </div>
+                            <span class="control-label">speaker</span>
+                        </button>
+                    </div>
+                    <div class="action-buttons">
+                        <button class="call-action-btn end-btn" onclick="window.endCall()">
+                            <svg class="icon" viewBox="0 0 24 24"><path fill="white" d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
+                        </button>
+                    </div>
+                </div>
+            `;
+
+        // start visualizer once DOM inserted
+        animateVisualizer();
+      }
+
+      function stopVisualizer() {
+        if (visualizerInterval) {
+          clearInterval(visualizerInterval);
+          visualizerInterval = null;
+        }
+        // reset bars to base height
+        const bars = document.querySelectorAll('.audio-visualizer .bar');
+        bars.forEach((b) => (b.style.height = '28px'));
+      }
+
+      function animateVisualizer() {
+        // clear previous interval if any (prevents multiple overlapping timers)
+        stopVisualizer();
+        const bars = document.querySelectorAll('.audio-visualizer .bar');
+        if (!bars || bars.length === 0) return;
+        // ensure a consistent base so layout doesn't reflow
+        bars.forEach((b) => (b.style.height = '28px'));
+        visualizerInterval = setInterval(() => {
+          bars.forEach((bar) => {
+            const variation = Math.random() * 40; // 0..40
+            const height = 20 + variation; // keeps in a predictable range
+            bar.style.height = height + 'px';
+          });
+        }, 240);
+      }
+
+      // End Call
+      window.endCall = async function () {
+        // stop visualizer when ending call
+        stopVisualizer();
+        if (currentCall && supabase) {
+          try {
+            // First, get all audio chunks for this call
+            const { data: audioChunks, error: fetchError } = await supabase
+              .from('audio_chunks')
+              .select('file_path')
+              .eq('call_id', currentCall);
+
+            if (fetchError) {
+              console.error('Error fetching audio chunks:', fetchError);
+            }
+
+            // Delete all audio files from storage
+            if (audioChunks && audioChunks.length > 0) {
+              const filePaths = audioChunks.map((chunk) => chunk.file_path);
+
+              const { error: storageError } = await supabase.storage
+                .from('call-audio')
+                .remove(filePaths);
+
+              if (storageError) {
+                console.error('Error deleting audio files:', storageError);
+              } else {
+                console.log(
+                  `Deleted ${filePaths.length} audio files from storage`,
+                );
+              }
+            }
+
+            // Delete audio chunk records from database
+            const { error: deleteError } = await supabase
+              .from('audio_chunks')
+              .delete()
+              .eq('call_id', currentCall);
+
+            if (deleteError) {
+              console.error('Error deleting audio records:', deleteError);
+            } else {
+              console.log('Deleted audio records from database');
+            }
+
+            // Update call status to ended
+            await supabase
+              .from('calls')
+              .update({
+                status: 'ended',
+                ended_at: new Date().toISOString(),
+              })
+              .eq('id', currentCall);
+
+            console.log('Call ended and audio cleaned up successfully');
+          } catch (e) {
+            console.log('Error ending call:', e);
+          }
+        }
+
+        stopRecording();
+        stopPrefetching(); // <-- stop prefetch interval
+        if (callSubscription) callSubscription.unsubscribe();
+        if (audioSubscription) audioSubscription.unsubscribe();
+        currentCall = null;
+        appState.activeCall = null;
+        appState.dialedNumber = '';
+        appState.screen = 'dialer';
+        render();
+      };
+
+      // Audio Recording Functions
+      async function startRecording() {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+          });
+          mediaRecorder = new MediaRecorder(stream);
+
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+              audioChunks.push(event.data);
+            }
+          };
+
+          mediaRecorder.onstop = () => {
+            if (audioChunks.length > 0 && isOnline) {
+              uploadAudioChunk();
+            }
+            audioChunks = [];
+          };
+
+          // Record in 5-second chunks (perfect for brief connectivity windows)
+          recordingInterval = setInterval(() => {
+            if (isOnline && mediaRecorder.state === 'recording') {
+              mediaRecorder.stop();
+              setTimeout(() => {
+                if (appState.activeCall) {
+                  audioChunks = [];
+                  try {
+                    mediaRecorder.start();
+                  } catch (e) {
+                    console.error('Error restarting recording:', e);
+                  }
+                }
+              }, 100);
+            }
+          }, 5000); // 5 seconds for quick uploads between stations
+
+          mediaRecorder.start();
+          console.log('Started recording (5-second chunks for subway)');
+        } catch (error) {
+          console.error('Error accessing microphone:', error);
+          alert('Please allow microphone access to make calls');
+        }
+      }
+
+      function stopRecording() {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+          mediaRecorder.stop();
+          mediaRecorder.stream.getTracks().forEach((track) => track.stop());
+        }
+        if (recordingInterval) {
+          clearInterval(recordingInterval);
+        }
+        if (currentAudio) {
+          currentAudio.pause();
+          currentAudio = null;
+        }
+      }
+
+      let uploadSequence = 0; // Track sequence of uploads
+
+      async function uploadAudioChunk() {
+        if (!supabase || !currentCall || audioChunks.length === 0) return;
+
+        try {
+          const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+          const timestamp = Date.now();
+          uploadSequence++;
+
+          const fileName = `${currentCall}/${myPhoneNumber}/audio_${uploadSequence
+            .toString()
+            .padStart(4, '0')}.webm`;
+
+          console.log(
+            'Uploading audio chunk:',
+            fileName,
+            'Size:',
+            audioBlob.size,
+          );
+
+          const { data: uploadData, error: uploadError } =
+            await supabase.storage
+              .from('call-audio')
+              .upload(fileName, audioBlob, {
+                upsert: true,
+              });
+
+          if (uploadError) {
+            console.error('Upload error:', uploadError);
+            throw uploadError;
+          }
+
+          const { data: urlData } = supabase.storage
+            .from('call-audio')
+            .getPublicUrl(fileName);
+
+          console.log('Got public URL for uploaded chunk:', urlData?.publicUrl);
+
+          // quick reachability check
+          try {
+            const resp = await fetch(urlData.publicUrl, { method: 'GET' });
+            console.log('Public URL fetch status:', resp.status, resp.ok);
+          } catch (fetchErr) {
+            console.warn(
+              'Public URL fetch failed (may be CORS or network):',
+              fetchErr,
+            );
+          }
+
+          await supabase.from('audio_chunks').upsert(
+            {
+              call_id: currentCall,
+              from_number: myPhoneNumber,
+              file_path: fileName,
+              url: urlData.publicUrl,
+              timestamp: new Date(timestamp).toISOString(),
+            },
+            {
+              onConflict: 'file_path',
+            },
+          );
+
+          console.log('Audio chunk uploaded and metadata written:', fileName);
+
+          // Self-cache uploaded blob so uploader can play it offline immediately.
+          try {
+            // Try the normal cache path first (will fetch public URL)
+            let cached = false;
+            try {
+              cached = await cacheAudioUrl(urlData?.publicUrl);
+            } catch (e) {
+              cached = false;
+            }
+
+            // If cacheAudioUrl failed (CORS/offline), write the blob we already have
+            if (!cached && typeof audioBlob !== 'undefined' && audioBlob) {
+              try {
+                await idbPutBlob(urlData?.publicUrl, audioBlob);
+                cached = true;
+                console.log(
+                  'Stored uploaded blob directly into IDB for immediate offline playback',
+                );
+              } catch (e) {
+                console.warn('Direct IDB write failed:', e);
+              }
+            }
+
+            // Resolve playable blob URL (cache-first) and enqueue so playback will work when offline
+            const playable = await resolvePlayableUrl(urlData?.publicUrl);
+            if (playable) {
+              if (!playedChunkIds.has(fileName)) {
+                playedChunkIds.add(fileName);
+                playbackQueue.push({ id: fileName, url: playable });
+                console.log(
+                  'Enqueued uploaded chunk for immediate playback when offline:',
+                  fileName,
+                );
+              }
+            } else {
+              console.log(
+                'Could not resolve playable blob immediately for',
+                fileName,
+              );
+            }
+          } catch (e) {
+            console.warn('Self-cache after upload failed (non-fatal):', e);
+          }
+
+          // FAST NOTIFY: broadcast lightweight "new-audio" event with public URL so listeners can cache immediately
+          try {
+            const ch = supabase.channel('audio-notify');
+            await ch.send({
+              type: 'broadcast',
+              event: 'new-audio',
+              payload: {
+                call_id: currentCall,
+                chunk_id: fileName,
+                url: urlData?.publicUrl,
+                file_path: fileName,
+              },
+            });
+            console.log(
+              'Broadcasted new-audio (with url) for call',
+              currentCall,
+            );
+          } catch (err) {
+            console.warn('Broadcast failed (non-fatal):', err);
+          }
+        } catch (error) {
+          console.error('Error uploading audio:', error);
+        }
+      }
+
+      // Listen for audio chunks using Realtime
+      function listenForAudio() {
+        if (!supabase || !currentCall) return;
+
+        const otherNumber = appState.activeCall.number;
+
+        try {
+          if (audioSubscription) audioSubscription.unsubscribe();
+        } catch (e) {}
+
+        audioSubscription = supabase
+          .channel(`audio-${currentCall}`)
+          .on(
+            'postgres_changes',
+            {
+              event: 'INSERT',
+              schema: 'public',
+              table: 'audio_chunks',
+              filter: `call_id=eq.${currentCall}`,
+            },
+            async (payload) => {
+              try {
+                console.log('Realtime audio payload received:', payload);
+                const chunk = payload.new;
+                if (!chunk || !chunk.id) {
+                  console.log(
+                    'Realtime payload missing chunk/new or id, ignoring',
+                  );
+                  return;
+                }
+
+                if (chunk.from_number === myPhoneNumber) {
+                  console.log('Received own chunk, ignoring:', chunk.id);
+                  return;
+                }
+
+                if (playedChunkIds.has(chunk.id)) {
+                  console.log('Chunk already played, ignoring:', chunk.id);
+                  return;
+                }
+
+                console.log('Chunk metadata:', {
+                  id: chunk.id,
+                  url: chunk.url,
+                  file_path: chunk.file_path,
+                  timestamp: chunk.timestamp || chunk.created_at,
+                });
+
+                // Attempt to cache the audio proactively and log result
+                console.log(
+                  'Attempting to cache audio URL (realtime):',
+                  chunk.url,
+                );
+                cacheAudioUrl(chunk.url)
+                  .then((cached) => {
+                    console.log(
+                      'cacheAudioUrl result (realtime):',
+                      chunk.id,
+                      cached,
+                    );
+                  })
+                  .catch((err) => {
+                    console.warn(
+                      'cacheAudioUrl error (realtime):',
+                      chunk.id,
+                      err,
+                    );
+                  });
+
+                // Attempt to resolve playable URL (cache-first, network fallback)
+                const playable = await resolvePlayableUrl(chunk.url);
+
+                if (playable) {
+                  console.log(
+                    'Playable URL resolved (cache or network):',
+                    playable,
+                  );
+                  playedChunkIds.add(chunk.id);
+                  playAudioChunk(playable, chunk.id);
+                } else {
+                  console.log(
+                    'No playable url available now, queuing chunk for later:',
+                    chunk.id,
+                  );
+                  // queue original URL so when online check runs it can try to cache/download
+                  playbackQueue.push({ id: chunk.id, url: chunk.url });
+                }
+              } catch (err) {
+                console.error('Error in realtime audio handler:', err);
+              }
+            },
+          )
+          .subscribe((status) => {
+            console.log('Audio subscription status:', status);
+          });
+      }
+
+      // Playback when offline
+      async function checkAndPlayAudio() {
+        if (!currentCall || !appState.activeCall) {
+          console.log('Skipping playback check - missing state', {
+            currentCall,
+            activeCall: !!appState.activeCall,
+          });
+          return;
+        }
+
+        console.log(
+          'Checking for audio chunks for call:',
+          currentCall,
+          'isOnline:',
+          isOnline,
+        );
+
+        try {
+          if (!isOnline) {
+            // OFFLINE: don't touch network. Try to play from local cache / playbackQueue only.
+            console.log(
+              'Offline mode: attempting to play cached queued chunks, queue length:',
+              playbackQueue.length,
+            );
+
+            const pending = [];
+            while (playbackQueue.length > 0) {
+              const item = playbackQueue.shift();
+              if (!item || !item.url) continue;
+
+              // if item.url is already a blob: URL, play directly
+              if (
+                typeof item.url === 'string' &&
+                item.url.startsWith('blob:')
+              ) {
+                console.log(
+                  'Offline: playing already-resolved blob URL for',
+                  item.id,
+                );
+                playedChunkIds.add(item.id);
+                playAudioChunk(item.url, item.id);
+                return;
+              }
+
+              // otherwise try IDB lookup by network URL key
+              const cachedBlobUrl = await getCachedBlobUrl(item.url);
+              if (cachedBlobUrl) {
+                console.log('Offline cache hit for chunk:', item.id, item.url);
+                playedChunkIds.add(item.id);
+                playAudioChunk(cachedBlobUrl, item.id);
+                return;
+              } else {
+                pending.push(item);
+              }
+            }
+
+            playbackQueue = pending.concat(playbackQueue);
+            console.log('Offline: no cached playable chunks found in queue');
+            return;
+          }
+
+          // ONLINE: fetch persisted rows, but use cache-first resolvePlayableUrl (no redundant direct fetch)
+          console.log(
+            'Online mode: fetching audio_chunks from Supabase for call',
+            currentCall,
+          );
+
+          const { data, error } = await supabase
+            .from('audio_chunks')
+            .select('*')
+            .eq('call_id', currentCall)
+            .order('timestamp', { ascending: true });
+
+          if (error) {
+            console.error('Error fetching audio chunks:', error);
+            return;
+          }
+
+          console.log('Fetched audio_chunks rows:', (data || []).length);
+
+          if (!data || data.length === 0) {
+            console.log('No audio chunks found yet');
+            return;
+          }
+
+          for (const chunk of data) {
+            if (chunk.from_number === myPhoneNumber) continue;
+            if (playedChunkIds.has(chunk.id)) continue;
+
+            // Try to resolve a playable URL (cache-first, network fallback)
+            console.log(
+              'Resolving playable URL for chunk:',
+              chunk.id,
+              chunk.url,
+            );
+            const playable = await resolvePlayableUrl(chunk.url);
+
+            if (playable) {
+              console.log('Resolved playable URL for chunk:', chunk.id);
+              playedChunkIds.add(chunk.id);
+              playbackQueue.push({ id: chunk.id, url: playable });
+            } else {
+              console.log(
+                'Could not resolve playable URL now, queueing original URL for later:',
+                chunk.id,
+              );
+              // queue original URL; when online the resolve step will attempt download+cache
+              playedChunkIds.add(chunk.id); // mark to avoid double-queueing
+              playbackQueue.push({ id: chunk.id, url: chunk.url });
+            }
+          }
+
+          // if nothing is playing, start playback from queue
+          if (!currentAudio && playbackQueue.length > 0) {
+            const next = playbackQueue.shift();
+            // try to resolve playable (should be cached if resolve succeeded above)
+            const playableNext = await resolvePlayableUrl(next.url);
+            if (playableNext) {
+              playAudioChunk(playableNext, next.id);
+            } else {
+              // fallback to original url (resolvePlayableUrl may do network fetch)
+              playAudioChunk(next.url, next.id);
+            }
+          }
+        } catch (err) {
+          console.error('checkAndPlayAudio error:', err);
+        }
+      }
+
+      // expose a simple debug helper
+      window.inspectPlayback = () => ({
+        playbackQueue: playbackQueue.slice(),
+        playedChunkIds: Array.from(playedChunkIds),
+        isOnline,
+      });
+
+      function playAudioChunk(url, chunkId = null) {
+        if (!url) return;
+
+        if (currentAudio) {
+          console.log('Already playing audio, will queue next:', url);
+          playbackQueue.push({ id: chunkId, url });
+          return;
+        }
+
+        console.log('Attempting to play audio chunk URL:', url, 'id:', chunkId);
+
+        // If this is a blob: URL (local), skip pre-fetch and play directly.
+        const doPlay = () => {
+          currentAudio = new Audio(url);
+          currentAudio.preload = 'auto';
+          currentAudio
+            .play()
+            .then(() => {
+              console.log('Audio.play() succeeded for', chunkId || url);
+            })
+            .catch((err) => {
+              console.error(
+                'Error playing audio (autoplay blocked?):',
+                err,
+                'for',
+                url,
+              );
+              currentAudio = null;
+            });
+        };
+
+        if (typeof url === 'string' && url.startsWith('blob:')) {
+          doPlay();
+        } else {
+          // network URL: optional quick HEAD to debug, then play (may fail if offline)
+          fetch(url, { method: 'HEAD' })
+            .catch(() => {})
+            .finally(doPlay);
+        }
+
+        currentAudio.onended = () => {
+          console.log('Audio chunk finished for', chunkId || url);
+          // revoke blob URL to avoid leaks
+          try {
+            if (typeof url === 'string' && url.startsWith('blob:'))
+              URL.revokeObjectURL(url);
+          } catch (e) {}
+          currentAudio = null;
+          if (chunkId) {
+            console.log('Marking chunk played:', chunkId);
+          }
+          if (playbackQueue.length > 0) {
+            const next = playbackQueue.shift();
+            setTimeout(() => playAudioChunk(next.url, next.id), 100);
+          }
+        };
+
+        currentAudio.onerror = (err) => {
+          console.error('Audio playback error:', err, 'for', url);
+          currentAudio = null;
+          if (playbackQueue.length > 0) {
+            const next = playbackQueue.shift();
+            setTimeout(() => playAudioChunk(next.url, next.id), 100);
+          }
+        };
+      }
+
+      // Online/Offline Detection
+      function updateConnectionStatus() {
+        const wasOnline = isOnline;
+        isOnline = navigator.onLine;
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+
+        if (statusDot) {
+          statusDot.className = isOnline
+            ? 'status-dot online'
+            : 'status-dot offline';
+        }
+        if (statusText) {
+          statusText.textContent = isOnline ? 'Online' : 'Offline';
+        }
+
+        console.log(
+          'Connection status changed:',
+          isOnline ? 'ONLINE' : 'OFFLINE',
+        );
+
+        if (appState.activeCall) {
+          if (isOnline && !wasOnline) {
+            // Just went ONLINE - start recording, stop playback, start prefetching
+            console.log('Going online - starting recording and prefetching');
+            if (currentAudio) {
+              currentAudio.pause();
+              currentAudio = null;
+            }
+            if (mediaRecorder && mediaRecorder.state !== 'recording') {
+              audioChunks = [];
+              try {
+                mediaRecorder.start();
+              } catch (e) {
+                console.error('Error starting recording:', e);
+              }
+            }
+            startPrefetching();
+          } else if (!isOnline && wasOnline) {
+            // Just went OFFLINE - stop recording, start playback
+            console.log(
+              'Going offline - stopping recording, starting playback',
+            );
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+              try {
+                mediaRecorder.stop();
+              } catch (e) {
+                console.error('Error stopping recording:', e);
+              }
+            }
+            // Stop prefetching (network not available) and immediately try playback from cached queue
+            stopPrefetching();
+            setTimeout(() => checkAndPlayAudio(), 500);
+          }
+          render();
+        }
+
+        // Update Supabase presence
+        if (supabase && myPhoneNumber && isOnline) {
+          try {
+            supabase.from('users').upsert({
+              phone_number: myPhoneNumber,
+              online: isOnline,
+              last_seen: new Date().toISOString(),
+            });
+          } catch (e) {
+            console.log('Demo mode presence:', e);
+          }
+        }
+      }
+
+      window.addEventListener('online', updateConnectionStatus);
+      window.addEventListener('offline', updateConnectionStatus);
+
+      // Check for audio playback every 3 seconds when offline
+      setInterval(() => {
+        if (!isOnline && appState.activeCall) {
+          checkAndPlayAudio();
+        }
+      }, 3000);
+
+      // Update time
+      function updateTime() {
+        const now = new Date();
+        const hours = now.getHours().toString().padStart(2, '0');
+        const minutes = now.getMinutes().toString().padStart(2, '0');
+        document.getElementById(
+          'statusTime',
+        ).textContent = `${hours}:${minutes}`;
+      }
+      setInterval(updateTime, 1000);
+      updateTime();
+
+      // Main render function
+      function render() {
+        // stop visualizer when not on active screen (prevents stray timers)
+        if (appState.screen !== 'active') stopVisualizer();
+        switch (appState.screen) {
+          case 'setup':
+            renderSetupScreen();
+            break;
+          case 'dialer':
+            renderDialerScreen();
+            break;
+          case 'incoming':
+            renderIncomingScreen();
+            break;
+          case 'calling':
+          case 'active':
+            renderActiveCallScreen();
+            break;
+        }
+      }
+
+      // Initialize
+      render();
+      updateConnectionStatus();
+
+      // Clean up old users on app start
+      if (supabase) {
+        cleanupOldUsers();
+
+        // Run cleanup every hour
+        setInterval(cleanupOldUsers, 60 * 60 * 1000);
+      }
+
+      (async () => {
+        try {
+          // Ensure DB + objectStore exist via helper
+          const db = await idbOpen();
+          const tx = db.transaction('chunks', 'readonly');
+          const store = tx.objectStore('chunks');
+          const keysReq = store.getAllKeys();
+          await new Promise((res, rej) => {
+            keysReq.onsuccess = res;
+            keysReq.onerror = rej;
+          });
+          console.log('IDB keys:', keysReq.result);
+          db.close();
+        } catch (e) {
+          console.warn('IDB init/list keys failed:', e);
+          // Attempt to recreate DB with proper object store (best-effort)
+          try {
+            indexedDB.deleteDatabase(IDB_DB);
+            await new Promise((res, rej) => {
+              const req = indexedDB.open(IDB_DB, 1);
+              req.onupgradeneeded = (ev) => {
+                const db2 = ev.target.result;
+                if (!db2.objectStoreNames.contains(IDB_STORE)) {
+                  db2.createObjectStore(IDB_STORE, { keyPath: 'key' });
+                }
+              };
+              req.onsuccess = res;
+              req.onerror = rej;
+            });
+            console.log('Recreated IDB with store:', IDB_STORE);
+          } catch (err) {
+            console.error('Failed to recreate IDB:', err);
+          }
+        }
+      })();
+    </script>
+  </body>
+</html>

@@ -244,8 +244,8 @@
     canvasEl.style.position = 'fixed';
     canvasEl.style.left = '0';
     canvasEl.style.top = '0';
-    canvasEl.style.width = '100vw';
-    canvasEl.style.height = '100vh';
+    canvasEl.style.width = '100dvw;';
+    canvasEl.style.height = '100dvh;';
     canvasEl.width = window.innerWidth;
     canvasEl.height = window.innerHeight;
 
