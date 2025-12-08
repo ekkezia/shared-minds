@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Subway Phone - Async Calls</title>
+    <!-- Tone.js for DTMF/dial tones -->
+    <script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.min.js"></script>
+    <style>
+      /* iPhone-like visual styling */
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+          'Helvetica Neue', Arial, sans-serif;
+        background: linear-gradient(180deg, #0b0b0f 0%, #06060a 100%);
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100dvh;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      /* phone bezel */
+      .phone-container {
+        width: 40vw;
+        max-width: 420px;
+        height: 100dvh;
+        max-height: 720px;
+        background: linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.15),
+          rgba(255, 255, 255, 0.1)
+        );
+        border-radius: 44px;
+        padding: 18px;
+        box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7),
+          inset 0 1px 0 rgba(255, 255, 255, 0.02);
+        position: relative;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* full-bleed on small devices */
+      @media (max-width: 680px) {
+        .phone-container {
+          width: 100dvw;
+          min-width: 100dvw;
+          height: 100dvh;
+          max-height: 100dvh;
+          border-radius: 0;
+          padding: 12px;
+          box-shadow: none;
+        }
+      }
+
+      /* notch */
+      .notch {
+        position: absolute;
+        top: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 100px;
+        height: 28px;
+        background: rgba(0, 0, 0, 0.85);
+        border-radius: 14px;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+      }
+
+      /* status bar */
+      .status-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0 18px 12px;
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.9);
+        z-index: 10;
+      }
+
+      #statusTime {
+        font-weight: 600;
+        letter-spacing: 0.5px;
+      }
+
+      .screen {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 14px 18px 26px;
+        gap: 6px;
+      }
+
+      /* caller block */
+      .caller-info {
+        text-align: center;
+        padding-top: 36px;
+      }
+
+      .caller-name {
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.6);
+        margin-bottom: 6px;
+        letter-spacing: 0.6px;
+      }
+
+      .caller-number {
+        font-size: 40px;
+        font-weight: 600;
+        letter-spacing: 2px;
+        color: #fff;
+        margin-bottom: 6px;
+      }
+
+      .call-status {
+        font-size: 14px;
+        color: rgba(255, 255, 255, 0.7);
+      }
+
+      /* dial / number area */
+      .number-input {
+        font-size: 42px;
+        font-weight: 600;
+        text-align: center;
+        color: #fff;
+        padding: 8px 12px;
+        margin: 18px 0;
+        background: linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.02),
+          transparent
+        );
+        min-height: 64px;
+        border-radius: 14px;
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+      }
+
+      /* dialpad buttons - glassy */
+      .dialpad {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        padding: 0 6px;
+        justify-items: center;
+      }
+
+      .dial-btn {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.2);
+        border: 1px solid rgba(255, 255, 255, 0.04);
+        color: #fff;
+        font-size: 28px;
+        font-weight: 500;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: transform 120ms ease, background 120ms;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+      }
+
+      .dial-btn:hover {
+        transform: translateY(-4px);
+        background: rgba(255, 255, 255, 0.09);
+      }
+      .dial-btn:active {
+        transform: translateY(0);
+      }
+
+      .dial-btn .letters {
+        font-size: 10px;
+        color: rgba(255, 255, 255, 0.55);
+        margin-top: -4px;
+      }
+
+      /* call action buttons row */
+      .action-buttons {
+        display: flex;
+        justify-content: space-around;
+        align-items: center;
+        margin-top: 18px;
+        gap: 12px;
+      }
+
+      .call-action-btn {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        border: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6);
+        transition: transform 120ms ease;
+      }
+
+      .call-btn {
+        background: linear-gradient(180deg, #34c759, #16a34a);
+        box-shadow: 0 12px 36px rgba(52, 199, 89, 0.22);
+      }
+
+      .end-btn {
+        background: linear-gradient(180deg, #ff3b30, #e53935);
+        box-shadow: 0 12px 36px rgba(255, 59, 48, 0.22);
+      }
+
+      .cancel-btn {
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.04);
+      }
+
+      .icon {
+        width: 34px;
+        height: 34px;
+        fill: #fff;
+      }
+
+      /* bottom home indicator */
+      .home-indicator {
+        position: absolute;
+        bottom: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 134px;
+        height: 6px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6),
+          inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        z-index: 30;
+      }
+
+      /* connection status badge */
+      .connection-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background: rgba(255, 255, 255, 0.04);
+        border-radius: 14px;
+        font-size: 12px;
+        z-index: 40;
+        backdrop-filter: blur(6px);
+      }
+
+      .status-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+      }
+      .status-dot.online {
+        background: #34c759;
+      }
+      .status-dot.offline {
+        background: #ff3b30;
+      }
+
+      /* small tweaks for very small screens */
+      @media (max-width: 360px) {
+        .caller-number {
+          font-size: 34px;
+        }
+        .dial-btn {
+          width: 68px;
+          height: 68px;
+        }
+        .call-action-btn {
+          width: 72px;
+          height: 72px;
+        }
+        .home-indicator {
+          width: 110px;
+        }
+      }
+
+      /* Active/calling screen layout (iPhone-like) */
+      .dialer-screen {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-start;
+        height: 100%;
+      }
+
+      .caller-info {
+        text-align: center;
+        padding-top: 24px;
+        width: 100%;
+      }
+
+      .caller-name {
+        font-size: 14px;
+        color: rgba(255, 255, 255, 0.65);
+        margin-bottom: 6px;
+        letter-spacing: 0.6px;
+      }
+
+      .caller-number {
+        font-size: 36px;
+        font-weight: 700;
+        letter-spacing: 1.6px;
+        color: #fff;
+        margin-bottom: 6px;
+      }
+
+      .call-duration {
+        font-size: 15px;
+        color: rgba(255, 255, 255, 0.75);
+        margin-top: 4px;
+      }
+
+      /* Visualizer sits below caller info when active */
+      .audio-visualizer {
+        display: flex;
+        align-items: flex-end; /* anchor bars to bottom to avoid jitter */
+        justify-content: center;
+        gap: 6px;
+        width: 100%;
+        height: 84px; /* fixed visualizer height to stop layout jitter */
+        min-height: 56px;
+        max-height: 120px;
+        padding: 12px 0;
+        overflow: hidden;
+      }
+      .audio-visualizer .bar {
+        width: 6px;
+        background: linear-gradient(180deg, #fff, #bbb);
+        border-radius: 4px;
+        height: 28px; /* stable base height */
+        min-height: 6px;
+        transition: height 160ms ease; /* smooth transitions */
+        opacity: 0.95;
+      }
+      .audio-visualizer .bar.recording {
+        background: linear-gradient(180deg, #ff3b30, #e53935);
+      }
+      .audio-visualizer .bar.playback {
+        background: linear-gradient(180deg, #fff, #bbb);
+      }
+
+      .call-controls {
+        display: flex;
+        gap: 18px;
+        justify-content: center;
+        align-items: center;
+        margin-top: 8px;
+      }
+
+      .control-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        background: transparent;
+        border: none;
+        color: #fff;
+      }
+      .control-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.06);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+      }
+      .control-label {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.75);
+      }
+
+      /* action-buttons: make end-call larger and centered */
+      .action-buttons {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 22px;
+        margin-top: 10px;
+      }
+      .call-action-btn.end-btn {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+      }
+
+      /* ensure small screens keep layout */
+      @media (max-width: 420px) {
+        .caller-number {
+          font-size: 32px;
+        }
+        .call-action-btn.end-btn {
+          width: 80px;
+          height: 80px;
+        }
+        .control-icon {
+          width: 48px;
+          height: 48px;
+          border-radius: 12px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="phone-container">
+      <div class="notch"></div>
+      <div class="status-bar">
+        <span id="statusTime">12:34</span>
+        <div class="connection-status" id="connectionStatus">
+          <span class="status-dot online" id="statusDot"></span>
+          <span id="statusText">Online</span>
+        </div>
+      </div>
+      <div class="screen" id="screen"></div>
+    </div>
+
+    <script type="module">
+      import { supabaseUrl, supabaseAnonKey } from './secret.js';
+
+      // Replace with the call id you want to sample, or set to null to skip
+      const sampleCallId = '8a46f49d-71c4-45c0-a699-1150e16f3385';
+
+      async function sampleAudioChunks(callId) {
+        if (!callId) {
+          console.log(
+            'No sampleCallId provided; skipping initial sample fetch.',
+          );
+          return;
+        }
+
+        if (location.protocol === 'file:') {
+          console.warn(
+            'Running from file:// — CORS will likely block requests. Serve the page over http(s).',
+          );
+        }
+
+        const url = `${supabaseUrl}/rest/v1/audio_chunks?select=*&call_id=eq.${encodeURIComponent(
+          callId,
+        )}&order=timestamp.asc`;
+
+        try {
+          const res = await fetch(url, {
+            method: 'GET',
+            headers: {
+              apikey: supabaseAnonKey,
+              Authorization: `Bearer ${supabaseAnonKey}`,
+              Accept: 'application/json',
+            },
+          });
+
+          console.log('REST fetch status:', res.status, res.statusText);
+          const json = await res.json().catch(() => null);
+          console.log(
+            'Fetched rows:',
+            Array.isArray(json) ? json.length : json,
+          );
+
+          if (Array.isArray(json) && json.length) {
+            console.log('First row sample:', json[0]);
+            // quick reachability check for first row url/file_path if present
+            const first = json[0];
+            const testUrl =
+              first.url ||
+              (first.file_path
+                ? `${supabaseUrl.replace(
+                    '.supabase.co',
+                    '.supabase.co/storage/v1/object/public/call-audio',
+                  )}/${first.file_path}`
+                : null);
+            if (testUrl) {
+              try {
+                const head = await fetch(testUrl, { method: 'HEAD' });
+                console.log('File HEAD', testUrl, head.status, head.ok);
+              } catch (err) {
+                console.warn('File HEAD failed (CORS/network):', err);
+              }
+            }
+          } else {
+            console.log('No audio_chunks rows returned for call:', callId);
+          }
+        } catch (err) {
+          console.error('Sample fetch error:', err);
+        }
+      }
+
+      // run on init
+      sampleAudioChunks(sampleCallId);
+    </script>
+
+    
+<script type="module">
+/* Minimal fallback app script to avoid syntax errors.
+   Keeps a working dialer UI and connection-status indicator.
+   This does NOT depend on Supabase; it's a safe local fallback. */
+
+let myPhoneNumber = sessionStorage.getItem('myPhoneNumber') || null;
+let myUsername = sessionStorage.getItem('myUsername') || null;
+let isOnline = navigator.onLine;
+let appState = { screen: 'dialer', dialedNumber: '', incomingCall: null, activeCall: null };
+
+function generatePhoneNumber() {
+  let n = '';
+  for (let i = 0; i < 10; i++) n += Math.floor(Math.random()*10);
+  return n;
+}
+if (!myPhoneNumber) {
+  myPhoneNumber = generatePhoneNumber();
+  sessionStorage.setItem('myPhoneNumber', myPhoneNumber);
+}
+
+function formatPhoneNumber(number) {
+  if (!number) return '';
+  if (number.length === 10) return `${number.slice(0,3)} ${number.slice(3,6)} ${number.slice(6)}`;
+  return number;
+}
+
+function renderSetupScreen() {
+  const screen = document.getElementById('screen');
+  screen.innerHTML = `
+    <div style="padding:24px; text-align:center;">
+      <h1>🚇 Subway Phone</h1>
+      <p>Local demo mode (no Supabase). Your number:</p>
+      <div style="font-size:20px; margin:12px 0;">${formatPhoneNumber(myPhoneNumber)}</div>
+      <button onclick="window.getNewNumber()" style="padding:10px 14px;">New Number</button>
+    </div>
+  `;
+}
+
+function renderDialerScreen() {
+  const screen = document.getElementById('screen');
+  screen.innerHTML = `
+    <div style="padding:18px; display:flex; flex-direction:column; align-items:center;">
+      <div style="font-size:13px; color:#bbb;">My Number</div>
+      <div style="font-size:18px; margin:8px 0;">${formatPhoneNumber(myPhoneNumber)}</div>
+      <div class="number-input" id="numberInput" style="width:100%; margin:12px 0; padding:12px; font-size:28px; text-align:center; border-radius:12px; background:rgba(255,255,255,0.03)">${formatPhoneNumber(appState.dialedNumber)}</div>
+      <div style="width:100%; display:grid; grid-template-columns:repeat(3,1fr); gap:12px;">
+        ${[1,2,3,4,5,6,7,8,9,'*',0,'#'].map(d => `<button class="dial-btn" onclick="window.dialPad('${d}')">${d}</button>`).join('')}
+      </div>
+      <div style="margin-top:16px;">
+        <button class="call-action-btn call-btn" style="padding:10px 16px;" onclick="window.makeCall()">Call</button>
+        <button class="call-action-btn cancel-btn" style="padding:10px 16px; margin-left:8px;" onclick="window.deleteDigit()">Del</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderIncomingScreen() {
+  const screen = document.getElementById('screen');
+  const call = appState.incomingCall || { from_number: 'unknown' };
+  screen.innerHTML = `
+    <div style="padding:24px; text-align:center;">
+      <div style="font-size:13px; color:#bbb;">Incoming</div>
+      <div style="font-size:22px; margin:8px 0;">${formatPhoneNumber(call.from_number)}</div>
+      <div style="margin-top:18px;">
+        <button class="call-btn" style="padding:10px 14px;" onclick="window.acceptCall()">Accept</button>
+        <button class="cancel-btn" style="padding:10px 14px; margin-left:8px;" onclick="window.rejectCall()">Reject</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderActiveCallScreen() {
+  const screen = document.getElementById('screen');
+  const call = appState.activeCall || { number: 'unknown' };
+  screen.innerHTML = `
+    <div style="padding:18px; text-align:center;">
+      <div style="font-size:13px; color:#bbb;">In Call</div>
+      <div style="font-size:22px; margin:8px 0;">${formatPhoneNumber(call.number)}</div>
+      <div style="margin-top:18px;">
+        <button class="end-btn" style="padding:10px 14px;" onclick="window.endCall()">End</button>
+      </div>
+    </div>
+  `;
+}
+
+window.dialPad = function(digit){
+  if (appState.dialedNumber.length < 10) {
+    appState.dialedNumber += String(digit);
+    render();
+  }
+};
+window.deleteDigit = function(){
+  appState.dialedNumber = appState.dialedNumber.slice(0,-1);
+  render();
+};
+
+window.makeCall = function(){
+  if (appState.dialedNumber.length < 1) { alert('Enter a number'); return; }
+  // Simulate outgoing call then active
+  appState.activeCall = { id: Date.now().toString(), number: appState.dialedNumber, status: 'active' };
+  appState.screen = 'active';
+  render();
+};
+
+window.acceptCall = function(){
+  if (!appState.incomingCall) return;
+  appState.activeCall = { id: appState.incomingCall.id || Date.now().toString(), number: appState.incomingCall.from_number, status: 'active' };
+  appState.incomingCall = null;
+  appState.screen = 'active';
+  render();
+};
+window.rejectCall = function(){
+  appState.incomingCall = null;
+  appState.screen = 'dialer';
+  render();
+};
+window.endCall = function(){
+  appState.activeCall = null;
+  appState.screen = 'dialer';
+  appState.dialedNumber = '';
+  render();
+};
+
+function updateConnectionStatus() {
+  isOnline = navigator.onLine;
+  const statusDot = document.getElementById('statusDot');
+  const statusText = document.getElementById('statusText');
+  if (statusDot) statusDot.className = isOnline ? 'status-dot online' : 'status-dot offline';
+  if (statusText) statusText.textContent = isOnline ? 'Online' : 'Offline';
+}
+
+function updateTime() {
+  const now = new Date();
+  const hours = now.getHours().toString().padStart(2,'0');
+  const minutes = now.getMinutes().toString().padStart(2,'0');
+  const elem = document.getElementById('statusTime');
+  if (elem) elem.textContent = `${hours}:${minutes}`;
+}
+
+function render(){
+  // stop any heavy stuff — this is a minimal fallback
+  switch(appState.screen) {
+    case 'setup': renderSetupScreen(); break;
+    case 'incoming': renderIncomingScreen(); break;
+    case 'active': renderActiveCallScreen(); break;
+    case 'dialer':
+    default: renderDialerScreen(); break;
+  }
+  updateConnectionStatus();
+}
+
+window.addEventListener('online', updateConnectionStatus);
+window.addEventListener('offline', updateConnectionStatus);
+setInterval(updateTime, 1000);
+updateTime();
+render();
+</script>
+
+
+</body>
+</html>

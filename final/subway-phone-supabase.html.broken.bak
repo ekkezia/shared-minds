@@ -138,76 +138,15 @@
         color: #fff;
         padding: 8px 12px;
         margin: 18px 0;
+        background: linear-gradient(
+          180deg,
+          rgba(255, 255, 255, 0.02),
+          transparent
+        );
         min-height: 64px;
-        position: relative;
-      }
-      .dial-option {
-        font-size: 21px;
-        font-weight: 600;
-      }
-
-      /* online users dropdown */
-      .online-users-dropdown {
-        position: absolute;
-        top: 100%;
-        left: 0;
-        right: 0;
-        background: rgba(30, 30, 35, 0.98);
         border-radius: 14px;
-        margin-top: 8px;
-        max-height: 200px;
-        overflow-y: auto;
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
-        z-index: 100;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-      }
-
-      .online-user-item {
-        padding: 12px 16px;
-        cursor: pointer;
-        transition: background 120ms ease;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-      }
-
-      .online-user-item:last-child {
-        border-bottom: none;
-      }
-
-      .online-user-item:hover {
-        background: rgba(255, 255, 255, 0.08);
-      }
-
-      .online-user-name {
-        font-size: 16px;
-        color: #fff;
-        font-weight: 500;
-      }
-
-      .online-user-number {
-        font-size: 14px;
-        color: rgba(255, 255, 255, 0.6);
-        letter-spacing: 0.5px;
-      }
-
-      .online-indicator {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: #34c759;
-        margin-right: 8px;
-        display: inline-block;
-      }
-
-      .no-online-users {
-        padding: 16px;
-        text-align: center;
-        color: rgba(255, 255, 255, 0.5);
-        font-size: 14px;
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
       }
 
       /* dialpad buttons - glassy */
@@ -402,391 +341,81 @@
         overflow: hidden;
       }
       .audio-visualizer .bar {
-        width: 4px;
-        border-radius: 2px;
+        width: 6px;
+        background: linear-gradient(180deg, #fff, #bbb);
+        border-radius: 4px;
         height: 28px; /* stable base height */
         min-height: 6px;
-        transition: height 160ms ease, background 160ms ease; /* smooth transitions */
+        transition: height 160ms ease; /* smooth transitions */
         opacity: 0.95;
-        background: transparent; /* default to transparent */
       }
-
-      /* Visualizer bar colors — use phone-container mode as the authoritative context.
-         These rules are deliberately more specific and come after the general rules. */
-      .phone-container.recording-mode .audio-visualizer .bar.recording,
       .audio-visualizer .bar.recording {
-        background: linear-gradient(180deg, #ff3b30, #e53935) !important;
+        background: linear-gradient(180deg, #ff3b30, #e53935);
       }
-      .phone-container.playback-mode .audio-visualizer .bar.playback,
       .audio-visualizer .bar.playback {
-        background: linear-gradient(180deg, #fff, #ddd) !important;
+        background: linear-gradient(180deg, #fff, #bbb);
       }
 
-      /* Subtle full-phone tints (overlay using ::after so base bezel styling remains) */
-      .phone-container.recording-mode::after,
-      .phone-container.playback-mode::after {
-        content: '';
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-        border-radius: inherit;
-        z-index: 5;
-      }
-
-      /* red tint for recording */
-      .phone-container.recording-mode::after {
-        background: radial-gradient(
-          ellipse at center,
-          rgba(255, 59, 48, 0.12) 0%,
-          rgba(255, 59, 48, 0.04) 20%,
-          transparent 65%
-        );
-      }
-
-      /* green tint for playback/offline */
-      .phone-container.playback-mode::after {
-        background: radial-gradient(
-          ellipse at center,
-          rgba(52, 199, 89, 0.1) 0%,
-          rgba(52, 199, 89, 0.03) 18%,
-          transparent 65%
-        );
-      }
-
-      /* Keep the old audio-visualizer tint as a fallback (lower visual priority) */
-      .audio-visualizer.recording-mode {
-        background: radial-gradient(
-          ellipse at center,
-          rgba(255, 59, 48, 0.06) 0%,
-          transparent 70%
-        );
-      }
-      .audio-visualizer.playback-mode {
-        background: radial-gradient(
-          ellipse at center,
-          rgba(52, 199, 89, 0.06) 0%,
-          transparent 70%
-        );
-      }
-
-      /* connection status badge */
-      .connection-status {
+      .call-controls {
         display: flex;
+        gap: 18px;
+        justify-content: center;
         align-items: center;
-        gap: 8px;
-        padding: 8px 12px;
-        background: rgba(255, 255, 255, 0.04);
-        border-radius: 14px;
-        font-size: 12px;
-        z-index: 40;
-        backdrop-filter: blur(6px);
+        margin-top: 8px;
       }
 
-      .status-dot {
-        width: 9px;
-        height: 9px;
-        border-radius: 50%;
-      }
-      .status-dot.online {
-        background: #34c759;
-      }
-      .status-dot.offline {
-        background: #ff3b30;
-      }
-
-      /* small tweaks for very small screens */
-      @media (max-width: 360px) {
-        .caller-number {
-          font-size: 34px;
-        }
-        .dial-btn {
-          width: 68px;
-          height: 68px;
-        }
-        .call-action-btn {
-          width: 72px;
-          height: 72px;
-        }
-        .home-indicator {
-          width: 110px;
-        }
-      }
-
-      /* Active/calling screen layout (iPhone-like) */
-      .dialer-screen {
+      .control-btn {
         display: flex;
         flex-direction: column;
         align-items: center;
-        justify-content: flex-start;
-        height: 100%;
-      }
-
-      .caller-info {
-        text-align: center;
-        padding-top: 24px;
-        width: 100%;
-      }
-
-      .caller-name {
-        font-size: 14px;
-        color: rgba(255, 255, 255, 0.65);
-        margin-bottom: 6px;
-        letter-spacing: 0.6px;
-      }
-
-      .caller-number {
-        font-size: 36px;
-        font-weight: 700;
-        letter-spacing: 1.6px;
+        gap: 8px;
+        background: transparent;
+        border: none;
         color: #fff;
-        margin-bottom: 6px;
       }
-
-      .call-duration {
-        font-size: 15px;
-        color: rgba(255, 255, 255, 0.75);
-        margin-top: 4px;
-      }
-
-      /* Visualizer sits below caller info when active */
-      .audio-visualizer {
-        display: flex;
-        align-items: flex-end; /* anchor bars to bottom to avoid jitter */
-        justify-content: center;
-        gap: 6px;
-        width: 100%;
-        height: 84px; /* fixed visualizer height to stop layout jitter */
-        min-height: 56px;
-        max-height: 120px;
-        padding: 12px 0;
-        overflow: hidden;
-      }
-      .audio-visualizer .bar {
-        width: 4px;
-        border-radius: 2px;
-        height: 28px; /* stable base height */
-        min-height: 6px;
-        transition: height 160ms ease, background 160ms ease; /* smooth transitions */
-        opacity: 0.95;
-        background: transparent; /* default to transparent */
-      }
-
-      /* Visualizer bar colors — use phone-container mode as the authoritative context.
-         These rules are deliberately more specific and come after the general rules. */
-      .phone-container.recording-mode .audio-visualizer .bar.recording,
-      .audio-visualizer .bar.recording {
-        background: linear-gradient(180deg, #ff3b30, #e53935) !important;
-      }
-      .phone-container.playback-mode .audio-visualizer .bar.playback,
-      .audio-visualizer .bar.playback {
-        background: linear-gradient(180deg, #fff, #ddd) !important;
-      }
-
-      /* Subtle full-phone tints (overlay using ::after so base bezel styling remains) */
-      .phone-container.recording-mode::after,
-      .phone-container.playback-mode::after {
-        content: '';
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-        border-radius: inherit;
-        z-index: 5;
-      }
-
-      /* red tint for recording */
-      .phone-container.recording-mode::after {
-        background: radial-gradient(
-          ellipse at center,
-          rgba(255, 59, 48, 0.12) 0%,
-          rgba(255, 59, 48, 0.04) 20%,
-          transparent 65%
-        );
-      }
-
-      /* green tint for playback/offline */
-      .phone-container.playback-mode::after {
-        background: radial-gradient(
-          ellipse at center,
-          rgba(52, 199, 89, 0.1) 0%,
-          rgba(52, 199, 89, 0.03) 18%,
-          transparent 65%
-        );
-      }
-
-      /* Keep the old audio-visualizer tint as a fallback (lower visual priority) */
-      .audio-visualizer.recording-mode {
-        background: radial-gradient(
-          ellipse at center,
-          rgba(255, 59, 48, 0.06) 0%,
-          transparent 70%
-        );
-      }
-      .audio-visualizer.playback-mode {
-        background: radial-gradient(
-          ellipse at center,
-          rgba(52, 199, 89, 0.06) 0%,
-          transparent 70%
-        );
-      }
-
-      /* connection status badge */
-      .connection-status {
+      .control-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.06);
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 8px 12px;
-        background: rgba(255, 255, 255, 0.04);
-        border-radius: 14px;
+        justify-content: center;
+        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+      }
+      .control-label {
         font-size: 12px;
-        z-index: 40;
-        backdrop-filter: blur(6px);
+        color: rgba(255, 255, 255, 0.75);
       }
 
-      .status-dot {
-        width: 9px;
-        height: 9px;
+      /* action-buttons: make end-call larger and centered */
+      .action-buttons {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 22px;
+        margin-top: 10px;
+      }
+      .call-action-btn.end-btn {
+        width: 60px;
+        height: 60px;
         border-radius: 50%;
       }
-      .status-dot.online {
-        background: #34c759;
-      }
-      .status-dot.offline {
-        background: #ff3b30;
-      }
 
-      /* small tweaks for very small screens */
-      @media (max-width: 360px) {
+      /* ensure small screens keep layout */
+      @media (max-width: 420px) {
         .caller-number {
-          font-size: 34px;
+          font-size: 32px;
         }
-        .dial-btn {
-          width: 68px;
-          height: 68px;
+        .call-action-btn.end-btn {
+          width: 80px;
+          height: 80px;
         }
-        .call-action-btn {
-          width: 72px;
-          height: 72px;
+        .control-icon {
+          width: 48px;
+          height: 48px;
+          border-radius: 12px;
         }
-        .home-indicator {
-          width: 110px;
-        }
-      }
-
-      /* Active/calling screen layout (iPhone-like) */
-      .dialer-screen {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: flex-start;
-        height: 100%;
-      }
-
-      .caller-info {
-        text-align: center;
-        padding-top: 24px;
-        width: 100%;
-      }
-
-      .caller-name {
-        font-size: 14px;
-        color: rgba(255, 255, 255, 0.65);
-        margin-bottom: 6px;
-        letter-spacing: 0.6px;
-      }
-
-      .caller-number {
-        font-size: 36px;
-        font-weight: 700;
-        letter-spacing: 1.6px;
-        color: #fff;
-        margin-bottom: 6px;
-      }
-
-      .call-duration {
-        font-size: 15px;
-        color: rgba(255, 255, 255, 0.75);
-        margin-top: 4px;
-      }
-
-      /* Visualizer sits below caller info when active */
-      .audio-visualizer {
-        display: flex;
-        align-items: flex-end; /* anchor bars to bottom to avoid jitter */
-        justify-content: center;
-        gap: 6px;
-        width: 100%;
-        height: 84px; /* fixed visualizer height to stop layout jitter */
-        min-height: 56px;
-        max-height: 120px;
-        padding: 12px 0;
-        overflow: hidden;
-      }
-      .audio-visualizer .bar {
-        width: 4px;
-        border-radius: 2px;
-        height: 28px; /* stable base height */
-        min-height: 6px;
-        transition: height 160ms ease, background 160ms ease; /* smooth transitions */
-        opacity: 0.95;
-        background: transparent; /* default to transparent */
-      }
-
-      /* Visualizer bar colors — use phone-container mode as the authoritative context.
-         These rules are deliberately more specific and come after the general rules. */
-      .phone-container.recording-mode .audio-visualizer .bar.recording,
-      .audio-visualizer .bar.recording {
-        background: linear-gradient(180deg, #ff3b30, #e53935) !important;
-      }
-      .phone-container.playback-mode .audio-visualizer .bar.playback,
-      .audio-visualizer .bar.playback {
-        background: linear-gradient(180deg, #fff, #ddd) !important;
-      }
-
-      /* Subtle full-phone tints (overlay using ::after so base bezel styling remains) */
-      .phone-container.recording-mode::after,
-      .phone-container.playback-mode::after {
-        content: '';
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-        border-radius: inherit;
-        z-index: 5;
-      }
-
-      /* red tint for recording */
-      .phone-container.recording-mode::after {
-        background: radial-gradient(
-          ellipse at center,
-          rgba(255, 59, 48, 0.12) 0%,
-          rgba(255, 59, 48, 0.04) 20%,
-          transparent 65%
-        );
-      }
-
-      /* green tint for playback/offline */
-      .phone-container.playback-mode::after {
-        background: radial-gradient(
-          ellipse at center,
-          rgba(52, 199, 89, 0.1) 0%,
-          rgba(52, 199, 89, 0.03) 18%,
-          transparent 65%
-        );
-      }
-
-      /* Keep the old audio-visualizer tint as a fallback (lower visual priority) */
-      .audio-visualizer.recording-mode {
-        background: radial-gradient(
-          ellipse at center,
-          rgba(255, 59, 48, 0.06) 0%,
-          transparent 70%
-        );
-      }
-      .audio-visualizer.playback-mode {
-        background: radial-gradient(
-          ellipse at center,
-          rgba(52, 199, 89, 0.06) 0%,
-          transparent 70%
-        );
       }
     </style>
   </head>
@@ -878,7 +507,7 @@
 
     <script type="module">
       // Supabase configuration
-      import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.7/+esm';
+      import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
       import { supabaseUrl, supabaseAnonKey } from './secret.js';
 
       let supabase;
@@ -904,9 +533,6 @@
       const AUTO_PLAY_UPLOADED = true;
       // track ack counts from peers
       let chunkAckCounts = {};
-      // online users tracking
-      let onlineUsers = [];
-      let usersSubscription = null;
 
       // --- IndexedDB helpers (store blobs by URL) ---
       const IDB_DB = 'subway-audio-db';
@@ -1333,11 +959,6 @@
           return;
         }
 
-        // Prompt for username if not set
-        if (!myUsername || !myUsername.trim()) {
-          askForUsername();
-        }
-
         try {
           const { error } = await supabase.from('users').upsert(
             {
@@ -1353,7 +974,7 @@
           if (error) {
             console.warn('User upsert warning:', error);
           } else {
-            console.log('User registered/ensured:', myPhoneNumber, myUsername);
+            console.log('User registered/ensured:', myPhoneNumber);
           }
 
           // start listening for incoming calls immediately
@@ -1362,14 +983,6 @@
             console.log('Incoming call listener started for:', myPhoneNumber);
           } catch (e) {
             console.warn('listenForIncomingCalls error:', e);
-          }
-
-          // start listening for online users
-          try {
-            listenForOnlineUsers();
-            console.log('Online users listener started');
-          } catch (e) {
-            console.warn('listenForOnlineUsers error:', e);
           }
         } catch (e) {
           console.warn('ensureRegisteredAndListened error:', e);
@@ -1475,68 +1088,6 @@
         render();
       };
 
-      // Fetch online users
-      async function fetchOnlineUsers() {
-        if (!supabase) return;
-
-        try {
-          const { data, error } = await supabase
-            .from('users')
-            .select('phone_number, username, online')
-            .eq('online', true)
-            .neq('phone_number', myPhoneNumber); // exclude self
-
-          if (error) {
-            console.warn('Error fetching online users:', error);
-            return;
-          }
-
-          onlineUsers = data || [];
-          console.log('Fetched online users:', onlineUsers.length);
-
-          // Re-render dialer if we're on that screen
-          if (appState.screen === 'dialer') {
-            render();
-          }
-        } catch (e) {
-          console.warn('fetchOnlineUsers error:', e);
-        }
-      }
-
-      // Listen for user online status changes
-      function listenForOnlineUsers() {
-        if (!supabase) return;
-
-        console.log('Setting up online users listener');
-
-        // unsubscribe previous if any
-        try {
-          if (usersSubscription) usersSubscription.unsubscribe();
-        } catch (e) {}
-
-        usersSubscription = supabase
-          .channel('online-users')
-          .on(
-            'postgres_changes',
-            {
-              event: '*', // listen for INSERT, UPDATE, DELETE
-              schema: 'public',
-              table: 'users',
-            },
-            (payload) => {
-              console.log('User status changed:', payload);
-              // Refresh online users list
-              fetchOnlineUsers();
-            },
-          )
-          .subscribe((status) => {
-            console.log('Online users subscription status:', status);
-          });
-
-        // Initial fetch
-        fetchOnlineUsers();
-      }
-
       // Listen for incoming calls using Realtime
       function listenForIncomingCalls() {
         if (!supabase) return;
@@ -1579,73 +1130,15 @@
       // Dialer Screen
       function renderDialerScreen() {
         const screen = document.getElementById('screen');
-
-        // Generate online users dropdown HTML
-        let dropdownHTML = '';
-        if (appState.dialedNumber.length === 0 && onlineUsers.length > 0) {
-          dropdownHTML = `
-            <div class="online-users-dropdown" id="onlineUsersDropdown">
-              ${onlineUsers
-                .map(
-                  (user) => `
-                <div class="online-user-item" onclick="window.selectUser('${
-                  user.phone_number
-                }')">
-                  <div style="display: flex; align-items: center; gap: 8px;">
-                    <span class="online-indicator"></span>
-                    <div>
-                      <div class="online-user-name">${
-                        user.username || 'Unknown'
-                      }</div>
-                      <div class="online-user-number">${formatPhoneNumber(
-                        user.phone_number,
-                      )}</div>
-                    </div>
-                  </div>
-                </div>
-              `,
-                )
-                .join('')}
-            </div>
-          `;
-        } else if (
-          appState.dialedNumber.length === 0 &&
-          onlineUsers.length === 0
-        ) {
-          dropdownHTML = `
-            <div class="online-users-dropdown" id="onlineUsersDropdown">
-              <div class="no-online-users">No other users online</div>
-            </div>
-          `;
-        }
-
         screen.innerHTML = `
                 <div class="dialer-screen">
                     <div style="text-align: center;">
-                        <div style="font-size: 14px; color: #888; margin-bottom: 4px;">${
-                          myUsername ? `${myUsername}` : 'My Number'
-                        }</div>
-                        <div style="font-size: 24px; margin-top: 5px;">${formatPhoneNumber(
-                          myPhoneNumber,
-                        )}</div>
+                        <div style="font-size: 14px; color: #888;">${myUsername ? `${myUsername}'s Number` : 'My Number'}</div>
+                        <div style="font-size: 24px; margin-top: 5px;">${formatPhoneNumber(myPhoneNumber)}</div>
                       </div>
-                    <div style="position: relative;">
-                      <div class="number-input" id="numberInput">
-                        ${
-                          appState.selectedUsername &&
-                          appState.dialedNumber.length > 0
-                            ? `<div style="font-size: 14px; color: #ddd; margin-bottom: 4px;font-weight:400;"><span style="color: #888">Calling</span> ${
-                                appState.selectedUsername
-                              }</div>${formatPhoneNumber(
-                                appState.dialedNumber,
-                              )}`
-                            : appState.dialedNumber.length > 0
-                            ? formatPhoneNumber(appState.dialedNumber)
-                            : `<span class="dial-option">Select or dial...</span>`
-                        }
-                      </div>
-                      ${dropdownHTML}
-                    </div>
+                    <div class="number-input" id="numberInput">${formatPhoneNumber(
+                      appState.dialedNumber,
+                    )}</div>
                     <div class="dialpad">
                         ${[1, 2, 3, 4, 5, 6, 7, 8, 9, '*', 0, '#']
                           .map(
@@ -1758,23 +1251,9 @@
         return letters[num] || '';
       }
 
-      window.selectUser = function (phoneNumber) {
-        appState.dialedNumber = phoneNumber;
-        // Store the selected user's info
-        const selectedUser = onlineUsers.find(
-          (u) => u.phone_number === phoneNumber,
-        );
-        if (selectedUser) {
-          appState.selectedUsername = selectedUser.username;
-        }
-        render();
-      };
-
       window.dialPad = function (digit) {
         if (appState.dialedNumber.length < 10) {
           appState.dialedNumber += digit;
-          // Clear selected username when manually dialing
-          appState.selectedUsername = null;
           // play dial tone for feedback
           try {
             playDTMFTone(digit);
@@ -1785,8 +1264,6 @@
 
       window.deleteDigit = function () {
         appState.dialedNumber = appState.dialedNumber.slice(0, -1);
-        // Clear selected username when deleting
-        appState.selectedUsername = null;
         render();
       };
 
@@ -2029,17 +1506,10 @@
                             : '<div style="font-size: 12px; color: #888; margin-top: 5px;">Playing their voice...</div>'
                         }
                     </div>
-                    <div class="audio-visualizer ${
-                      isOnline ? 'recording-mode' : 'playback-mode'
-                    }" id="visualizer">
+                    <div class="audio-visualizer" id="visualizer">
                         ${Array(12)
                           .fill(0)
-                          .map(
-                            () =>
-                              `<div class="bar ${
-                                isOnline ? 'recording' : 'playback'
-                              }"></div>`,
-                          )
+                          .map(() => `<div class="bar"></div>`)
                           .join('')}
                     </div>
                     <div class="call-controls">
@@ -2708,6 +2178,7 @@
             console.log('Marking chunk played:', chunkId);
           }
           if (playbackQueue.length > 0) {
+           
             const next = playbackQueue.shift();
             setTimeout(() => playAudioChunk(next.url, next.id), 100);
           }
@@ -2761,11 +2232,6 @@
               }
             }
             startPrefetching();
-            // Update visualizer container class
-            const visualizer = document.getElementById('visualizer');
-            if (visualizer) {
-              visualizer.className = 'audio-visualizer recording-mode';
-            }
             // Restart visualizer with real-time audio
             animateVisualizer();
           } else if (!isOnline && wasOnline) {
@@ -2783,11 +2249,6 @@
             // Stop prefetching (network not available) and immediately try playback from cached queue
             stopPrefetching();
             setTimeout(() => checkAndPlayAudio(), 500);
-            // Update visualizer container class
-            const visualizer = document.getElementById('visualizer');
-            if (visualizer) {
-              visualizer.className = 'audio-visualizer playback-mode';
-            }
             // Restart visualizer with random animation for playback
             animateVisualizer();
           }
@@ -2855,27 +2316,47 @@
       render();
       updateConnectionStatus();
 
-      // Run cleanup every hour
-      setInterval(cleanupOldUsers, 60 * 60 * 1000);
 
-      // Clean up old users on app start
-      // Optional: simple IDB check
+        // Run cleanup every hour
+        setInterval(cleanupOldUsers, 60 * 60 * 1000);
+      }      // Clean up old users on app start
+
       (async () => {
         try {
-          const db = await idbOpen();
-          const tx = db.transaction(IDB_STORE, 'readonly');
-          const store = tx.objectStore(IDB_STORE);
-          const keys = await new Promise((resolve, reject) => {
-            const req = store.getAllKeys();
-            req.onsuccess = () => resolve(req.result);
-            req.onerror = reject;
-          });
-          console.log('IDB keys:', keys);
-          db.close();
-        } catch (err) {
-          console.warn('IDB initialization failed:', err);
-        }
+          // Ensure DB + objectStore exist via helper        // Run cleanup every hour
+          const db = await idbOpen();cleanupOldUsers, 60 * 60 * 1000);
+          const tx = db.transaction('chunks', 'readonly');
+          const store = tx.objectStore('chunks');
+          const keysReq = store.getAllKeys();
+          await new Promise((res, rej) => {
+            keysReq.onsuccess = res;lper
+            keysReq.onerror = rej;
+          });', 'readonly');
+          console.log('IDB keys:', keysReq.result);re('chunks');
+          db.close();tAllKeys();
+        } catch (e) {it new Promise((res, rej) => {
+          console.warn('IDB init/list keys failed:', e);
+          // Attempt to recreate DB with proper object store (best-effort)nerror = rej;
+          try {
+            indexedDB.deleteDatabase(IDB_DB);
+            await new Promise((res, rej) => {
+              const req = indexedDB.open(IDB_DB, 1); (e) {
+              req.onupgradeneeded = (ev) => {iled:', e);
+                const db2 = ev.target.result;er object store (best-effort)
+                if (!db2.objectStoreNames.contains(IDB_STORE)) {
+                  db2.createObjectStore(IDB_STORE, { keyPath: 'key' });
+                }
+              };
+              req.onsuccess = res;
+              req.onerror = rej;onst db2 = ev.target.result;
+            });if (!db2.objectStoreNames.contains(IDB_STORE)) {
+            console.log('Recreated IDB with store:', IDB_STORE);Store(IDB_STORE, { keyPath: 'key' });
+          } catch (err) {
+            console.error('Failed to recreate IDB:', err);;
+          }
+        } = rej;
       })();
     </script>
-  </body>
+
+</body>
 </html>

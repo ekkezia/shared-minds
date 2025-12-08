@@ -1,0 +1,470 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue',
+    Arial, sans-serif;
+  background: linear-gradient(180deg, #0b0b0f 0%, #06060a 100%);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* phone bezel */
+.phone-container {
+  width: 50dvw;
+  max-width: 420px;
+  height: 95dvh;
+  max-height: 720px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.15),
+    rgba(255, 255, 255, 0.1)
+  );
+  border-radius: 44px;
+  padding: 18px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7),
+    inset 0 1px 0 rgba(255, 255, 255, 0.02);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  overflow-y: scroll;
+}
+
+/* Default: remove any full-phone overlay unless a call-view class is present */
+.phone-container::after {
+  background: none;
+}
+
+/* Call-connected (green overlay) */
+.phone-container.call-connected {
+  background: rgba(0, 255, 0, 0.1);
+}
+
+/* Calling (red overlay) */
+.phone-container.calling-active {
+  background: rgba(255, 0, 0, 0.1);
+}
+
+/* full-bleed on small devices */
+@media (max-width: 680px) {
+  .phone-container {
+    width: 100dvw;
+    min-width: 100dvw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+    padding: 12px;
+    box-shadow: none;
+  }
+}
+
+/* notch */
+.notch {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100px;
+  height: 24px;
+  background: rgba(0, 0, 0, 0.85);
+  border-radius: 14px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+/* status bar */
+.status-bar {
+  position: absolute;
+  top: 8px;
+  left: 16px;
+	width: calc(100% - 16px);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 18px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+  z-index: 10;
+}
+
+#statusTime {
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+/* screen layout */
+.screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 32px 0;
+  gap: 6px;
+}
+
+/* Active/calling screen layout */
+.dialer-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  height: 100%;
+}
+
+/* caller info */
+.caller-info {
+  text-align: center;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.caller-name {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
+  letter-spacing: 0.6px;
+}
+
+.caller-number {
+  font-size: 36px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  color: #fff;
+}
+
+.call-status {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.call-duration {
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.75);
+  margin-top: 4px;
+}
+
+/* number input / dial area */
+.number-input {
+  font-size: 42px;
+  font-weight: 600;
+  text-align: center;
+  color: #fff;
+  min-height: 64px;
+  position: relative;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+}
+
+.dial-option {
+  font-size: 21px;
+  font-weight: 600;
+}
+
+/* online users dropdown */
+.online-users-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: rgba(30, 30, 35, 0.98);
+  border-radius: 14px;
+  margin-top: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  z-index: 100;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.online-user-item {
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: background 120ms ease;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.online-user-item:last-child {
+  border-bottom: none;
+}
+
+.online-user-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.online-user-name {
+  font-size: 16px;
+  color: #fff;
+  font-weight: 500;
+}
+
+.online-user-number {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.6);
+  letter-spacing: 0.5px;
+}
+
+.online-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #34c759;
+  margin-right: 8px;
+  display: inline-block;
+}
+
+.no-online-users {
+  padding: 16px;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 14px;
+}
+
+/* dialpad */
+.dialpad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  padding: 0 6px;
+  justify-items: center;
+}
+
+.dial-btn {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  color: #fff;
+  font-size: 28px;
+  font-weight: 500;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 120ms ease, background 120ms;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+}
+
+.dial-btn:hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.dial-btn:active {
+  transform: translateY(0);
+}
+
+.dial-btn .letters {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.55);
+  margin-top: -4px;
+}
+
+/* action buttons */
+.action-buttons {
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  margin-top: 18px;
+  gap: 12px;
+}
+
+.call-action-btn {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6);
+  transition: transform 120ms ease;
+}
+
+.call-btn {
+  background: linear-gradient(180deg, #34c759, #16a34a);
+  box-shadow: 0 12px 36px rgba(52, 199, 89, 0.22);
+}
+
+.end-btn {
+  background: linear-gradient(180deg, #ff3b30, #e53935);
+  box-shadow: 0 12px 36px rgba(255, 59, 48, 0.22);
+}
+
+.cancel-btn {
+  background: rgba(255, 255, 255, 0);
+  border: 1px solid rgba(255, 255, 255, 0);
+}
+
+.icon {
+  width: 34px;
+  height: 34px;
+  fill: #fff;
+}
+
+/* home indicator */
+.home-indicator {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 134px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  z-index: 30;
+}
+
+/* connection status badge */
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 12px;
+  z-index: 40;
+}
+
+/* Network icon color: Online = RED, Offline = GREEN */
+.connection-status.online {
+  color: #ff3b30 !important; /* Online -> RED */
+}
+
+.connection-status.offline {
+  color: #34c759 !important; /* Offline -> GREEN */
+}
+
+/* Ensure SVG paths use the current color (defensive) */
+.connection-status .network-icon,
+.connection-status .network-icon path {
+  color: inherit;
+  fill: currentColor !important;
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.status-dot.online {
+  background: #34c759;
+}
+
+.status-dot.offline {
+  background: #ff3b30;
+}
+
+/* audio visualizer */
+.audio-visualizer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 84px;
+  min-height: 56px;
+  max-height: 120px;
+  padding: 12px 0;
+  overflow: hidden;
+}
+
+.audio-visualizer .bar {
+  width: 4px;
+  border-radius: 2px;
+  height: 28px;
+  min-height: 6px;
+  transition: height 160ms ease, background 160ms ease;
+  opacity: 0.95;
+  background: transparent;
+}
+
+/* bar colors based on mode */
+.phone-container.recording-mode .audio-visualizer .bar.recording,
+.audio-visualizer .bar.recording {
+  background: linear-gradient(180deg, #ff3b30, #e53935) !important;
+}
+
+.phone-container.playback-mode .audio-visualizer .bar.playback,
+.audio-visualizer .bar.playback {
+  background: linear-gradient(180deg, #fff, #ddd) !important;
+}
+
+/* subtle full-phone tints */
+/* .phone-container.recording-mode::after,
+.phone-container.playback-mode::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  z-index: 5;
+}
+
+.phone-container.recording-mode::after {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(255, 59, 48, 0.12) 0%,
+    rgba(255, 59, 48, 0.04) 20%,
+    transparent 65%
+  );
+}
+
+.phone-container.playback-mode::after {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(52, 199, 89, 0.1) 0%,
+    rgba(52, 199, 89, 0.03) 18%,
+    transparent 65%
+  );
+} */
+
+/* fallback tint on the visualizer itself */
+.audio-visualizer.recording-mode {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(255, 59, 48, 0.06) 0%,
+    transparent 70%
+  );
+}
+
+.audio-visualizer.playback-mode {
+  background: radial-gradient(
+    ellipse at center,
+    rgba(52, 199, 89, 0.06) 0%,
+    transparent 70%
+  );
+}
+
+/* small screens */
+@media (max-width: 360px) {
+  .caller-number {
+    font-size: 34px;
+  }
+  .home-indicator {
+    width: 110px;
+  }
+}
