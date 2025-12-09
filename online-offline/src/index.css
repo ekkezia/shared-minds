@@ -459,6 +459,29 @@ body {
   );
 }
 
+/* Timeline scrollbar styling (Webkit browsers) */
+.timeline-scrollable::-webkit-scrollbar,
+.chunk-timeline-scrollable::-webkit-scrollbar {
+  height: 6px;
+}
+
+.timeline-scrollable::-webkit-scrollbar-track,
+.chunk-timeline-scrollable::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 3px;
+}
+
+.timeline-scrollable::-webkit-scrollbar-thumb,
+.chunk-timeline-scrollable::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
+}
+
+.timeline-scrollable::-webkit-scrollbar-thumb:hover,
+.chunk-timeline-scrollable::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.5);
+}
+
 /* small screens */
 @media (max-width: 360px) {
   .caller-number {

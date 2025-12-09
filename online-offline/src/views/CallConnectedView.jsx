@@ -1,5 +1,5 @@
 // src/views/CallConnectedView.jsx
-import { useMemo, useState, useRef } from 'preact/hooks';
+import { useMemo, useState, useRef, useEffect } from 'preact/hooks';
 import DualTimeline from '../components/DualTimeline.jsx';
 
 export default function CallConnectedView({
@@ -16,6 +16,42 @@ export default function CallConnectedView({
   otherStateHistory = [],
 }) {
   const timelineRef = useRef(null);
+
+  // Auto-scroll to keep the currently playing chunk visible
+  useEffect(() => {
+    if (!timelineRef.current || !currentPlayingChunkId || chunks.length === 0) {
+      return;
+    }
+
+    const timeline = timelineRef.current;
+    const currentIndex = chunks.findIndex(
+      (c) => c.id === currentPlayingChunkId,
+    );
+
+    if (currentIndex === -1) return;
+
+    // Calculate the position of the current chunk
+    const chunkLeft = currentIndex * 80; // Each chunk is 80px wide
+    const chunkRight = chunkLeft + 80;
+    const scrollLeft = timeline.scrollLeft;
+    const scrollRight = scrollLeft + timeline.clientWidth;
+
+    // Check if the chunk is outside the visible area
+    const needsScroll = chunkLeft < scrollLeft || chunkRight > scrollRight;
+
+    if (needsScroll) {
+      // Calculate the ideal scroll position to center the chunk (with some padding)
+      const idealScroll = chunkLeft - timeline.clientWidth / 2 + 40; // Center the chunk
+      const maxScroll = timeline.scrollWidth - timeline.clientWidth;
+      const targetScroll = Math.max(0, Math.min(idealScroll, maxScroll));
+
+      // Smooth scroll to the target position
+      timeline.scrollTo({
+        left: targetScroll,
+        behavior: 'smooth',
+      });
+    }
+  }, [currentPlayingChunkId, currentChunkProgress, chunks]);
   // Calculate total duration (each chunk is ~5 seconds)
   const totalDuration = chunks.length * 5;
   const chunkWidthPercent = chunks.length > 0 ? 100 / chunks.length : 0;
@@ -74,6 +110,7 @@ export default function CallConnectedView({
           {/* Timeline Container */}
           <div
             ref={timelineRef}
+            class='chunk-timeline-scrollable'
             style={{
               position: 'relative',
               width: '100%',
@@ -82,8 +119,11 @@ export default function CallConnectedView({
               borderRadius: '4px',
               overflowX: 'auto',
               overflowY: 'hidden',
-              minWidth: `${Math.max(100, chunks.length * 80)}px`, // Minimum width based on chunk count
+              scrollBehavior: 'smooth',
               cursor: 'pointer',
+              // Custom scrollbar styling
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(255, 255, 255, 0.3) rgba(0, 0, 0, 0.1)',
             }}
             onClick={(e) => {
               if (!playbackController || !timelineRef.current) return;
