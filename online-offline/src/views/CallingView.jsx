@@ -1,5 +1,6 @@
 // src/views/CallingView.jsx
 import { useEffect, useState, useRef } from 'preact/hooks';
+import { normalizePhoneNumber } from '../services/audioService.js';
 
 function Visualizer({ mode = 'recording', audioStream = null }) {
   const [heights, setHeights] = useState(Array(12).fill(28));
@@ -15,6 +16,7 @@ function Visualizer({ mode = 'recording', audioStream = null }) {
     if (mode === 'recording' && audioStream) {
       try {
         // Create AudioContext and AnalyserNode
+        // @ts-ignore - webkitAudioContext exists in some browsers
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         const audioContext = new AudioContext();
         const analyser = audioContext.createAnalyser();
@@ -61,22 +63,21 @@ function Visualizer({ mode = 'recording', audioStream = null }) {
           }
 
           setHeights(newHeights);
-          animationFrameRef.current = requestAnimationFrame(updateVisualization);
+          animationFrameRef.current =
+            requestAnimationFrame(updateVisualization);
         };
 
         updateVisualization();
       } catch (err) {
-        console.warn('[Visualizer] Failed to setup audio analysis, using fallback', err);
-        // Fallback to random animation if Web Audio API fails
-        const interval = setInterval(
-          () => {
-            if (!mounted) return;
-            setHeights((h) =>
-              h.map(() => 10 + Math.round(Math.random() * 50)),
-            );
-          },
-          80,
+        console.warn(
+          '[Visualizer] Failed to setup audio analysis, using fallback',
+          err,
         );
+        // Fallback to random animation if Web Audio API fails
+        const interval = setInterval(() => {
+          if (!mounted) return;
+          setHeights((h) => h.map(() => 10 + Math.round(Math.random() * 50)));
+        }, 80);
         return () => {
           mounted = false;
           clearInterval(interval);
@@ -131,7 +132,15 @@ function Visualizer({ mode = 'recording', audioStream = null }) {
   );
 }
 
-export default function CallingView({ call, isOnline, onEnd, audioStream, uploadedChunksCount = 0 }) {
+export default function CallingView({
+  call,
+  isOnline,
+  onEnd,
+  audioStream,
+  uploadedChunksCount = 0,
+  myPhoneNumber = '',
+  myUsername = '',
+}) {
   const [elapsedTime, setElapsedTime] = useState(0);
 
   useEffect(() => {
@@ -162,12 +171,46 @@ export default function CallingView({ call, isOnline, onEnd, audioStream, upload
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
+  // Determine if current user is the caller or recipient
+  const normalizeNumber = normalizePhoneNumber;
+  const myNorm = normalizeNumber(myPhoneNumber);
+  const fromNorm = normalizeNumber(call.from_number || '');
+  const toNorm = normalizeNumber(call.to_number || '');
+  const isCaller = fromNorm === myNorm; // Current user initiated the call
+  const isRecipient = toNorm === myNorm; // Current user is being called
+
+  // Get the other party's username
+  const otherPartyUsername = isCaller
+    ? call.to_username || call.to_number || 'Unknown'
+    : call.from_username || call.from_number || 'Unknown';
+
   return (
     <div class='screen dialer-screen'>
       <div class='caller-info'>
-        <div class='caller-name'>
-          {call.to_username || call.from_username || 'Subway Call'}
-        </div>
+        <div class='caller-name'>{myUsername || 'You'}</div>
+        {isCaller && call.to_username && (
+          <div
+            style={{
+              marginTop: '4px',
+              fontSize: '14px',
+              colro: 'white',
+            }}
+          >
+            <span style={{ color: 'rgba(255, 255, 255, 0.5)' }}>calling </span>
+            <span style={{ fontWeight: 'bold' }}>{call.to_username}</span>
+          </div>
+        )}
+        {isRecipient && call.from_username && (
+          <div
+            style={{
+              marginTop: '4px',
+              fontSize: '14px',
+              color: 'rgba(255, 255, 255, 0.8)',
+            }}
+          >
+            calling {call.from_username}
+          </div>
+        )}
         <div class='caller-number'>{call.other_number}</div>
         <div class='call-status'>
           {isOnline ? 'Recording your voice...' : 'Playing their voice...'}
@@ -195,7 +238,9 @@ export default function CallingView({ call, isOnline, onEnd, audioStream, upload
               }}
             >
               {uploadedChunksCount > 0
-                ? `✅ ${uploadedChunksCount} chunk${uploadedChunksCount !== 1 ? 's' : ''} uploaded`
+                ? `✅ ${uploadedChunksCount} chunk${
+                    uploadedChunksCount !== 1 ? 's' : ''
+                  } uploaded`
                 : '⏳ Waiting for first upload...'}
             </div>
           </>

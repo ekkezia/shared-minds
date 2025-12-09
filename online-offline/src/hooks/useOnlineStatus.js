@@ -10,8 +10,22 @@ export default function useOnlineStatus() {
   const [isOnline, setIsOnline] = useState(getInitial);
 
   useEffect(() => {
+    let wasOnline = getInitial();
+    
     function update() {
-      setIsOnline(Boolean(navigator.onLine));
+      const nowOnline = Boolean(navigator.onLine);
+      
+      // Log connectivity changes for debugging
+      if (wasOnline !== nowOnline) {
+        console.log('[useOnlineStatus] Connectivity changed', {
+          from: wasOnline ? 'online' : 'offline',
+          to: nowOnline ? 'online' : 'offline',
+          timestamp: new Date().toISOString(),
+        });
+        wasOnline = nowOnline;
+      }
+      
+      setIsOnline(nowOnline);
     }
 
     // Keep a single handler for both events

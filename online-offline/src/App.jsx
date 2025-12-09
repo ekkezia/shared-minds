@@ -49,10 +49,59 @@ export default function App() {
   // Use shared normalization function for consistency
   const normalizeNumber = normalizePhoneNumber;
 
-  const [view, setViewState] = useState('setup'); // setup|dialer|incoming|calling|connected|end
-  const viewRef = useRef('setup'); // Keep a ref to current view for callbacks
+  // Detect and log page reloads (for debugging mobile connectivity issues)
+  useEffect(() => {
+    // Check if this is a page reload (not initial load)
+    const navEntry = performance.getEntriesByType('navigation')[0];
+    // @ts-ignore - PerformanceNavigationTiming has 'type' property
+    const navType = navEntry && 'type' in navEntry ? navEntry.type : null;
+    const isReload =
+      (performance.navigation && performance.navigation.type === 1) || // TYPE_RELOAD (legacy API)
+      navType === 'reload';
 
-  // Wrapper to update both state and ref
+    if (isReload) {
+      console.warn(
+        '[App] ⚠️ Page was reloaded - this may be due to mobile browser behavior on connectivity change',
+      );
+      console.log('[App] Navigation type:', {
+        performanceNavType: performance.navigation?.type,
+        navigationEntryType: navType,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }, []);
+
+  // Restore view from sessionStorage on mount (for mobile page reloads)
+  const restoreView = () => {
+    try {
+      const saved = sessionStorage.getItem('savedView');
+      const savedCall = sessionStorage.getItem('currentCall');
+      if (saved && savedCall) {
+        const parsedCall = JSON.parse(savedCall);
+        const status = String(parsedCall.status || '').toLowerCase();
+        // Only restore view if call is still active or ringing
+        if (status === 'active' || status === 'ringing') {
+          console.log('[App] 🔄 Restoring view from sessionStorage', {
+            view: saved,
+            callId: parsedCall.id,
+            status: parsedCall.status,
+          });
+          return saved;
+        } else {
+          sessionStorage.removeItem('savedView');
+        }
+      }
+    } catch (e) {
+      console.warn('[App] Failed to restore view from sessionStorage', e);
+      sessionStorage.removeItem('savedView');
+    }
+    return 'setup';
+  };
+
+  const [view, setViewState] = useState(restoreView); // setup|dialer|incoming|calling|connected|end
+  const viewRef = useRef(view); // Keep a ref to current view for callbacks
+
+  // Wrapper to update both state and ref, and persist to sessionStorage
   const setView = (newView) => {
     console.log('[setView] Changing view', {
       from: viewRef.current,
@@ -60,6 +109,24 @@ export default function App() {
     });
     viewRef.current = newView;
     setViewState(newView);
+
+    // Persist view to sessionStorage if we have an active call
+    // Do this synchronously to ensure it's saved before any potential reload
+    if (currentCall && currentCall.id) {
+      const status = String(currentCall.status || '').toLowerCase();
+      if (status === 'active' || status === 'ringing') {
+        try {
+          sessionStorage.setItem('savedView', newView);
+          // Also ensure currentCall is saved (in case it wasn't saved yet)
+          sessionStorage.setItem('currentCall', JSON.stringify(currentCall));
+        } catch (e) {
+          console.warn('[App] Failed to save view to sessionStorage', e);
+        }
+      }
+    } else if (newView === 'setup' || newView === 'dialer') {
+      // Clear saved view when going to setup/dialer without a call
+      sessionStorage.removeItem('savedView');
+    }
   };
 
   const [myUsername, setMyUsername] = useState(
@@ -71,7 +138,64 @@ export default function App() {
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [usersInCall, setUsersInCall] = useState(new Set()); // Track phone numbers of users in active calls
   const [userCallPartners, setUserCallPartners] = useState(new Map()); // Map of phone number -> call partner info
-  const [currentCall, setCurrentCall] = useState(null);
+
+  // Restore currentCall from sessionStorage on mount (for mobile page reloads)
+  const restoreCurrentCall = () => {
+    try {
+      const saved = sessionStorage.getItem('currentCall');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Only restore if call is still active or ringing (not ended/rejected)
+        const status = String(parsed.status || '').toLowerCase();
+        if (status === 'active' || status === 'ringing') {
+          console.log('[App] 🔄 Restoring call state from sessionStorage', {
+            callId: parsed.id,
+            status: parsed.status,
+          });
+          return parsed;
+        } else {
+          // Clear stale ended/rejected calls
+          sessionStorage.removeItem('currentCall');
+          sessionStorage.removeItem('savedView');
+        }
+      }
+    } catch (e) {
+      console.warn('[App] Failed to restore call from sessionStorage', e);
+      sessionStorage.removeItem('currentCall');
+      sessionStorage.removeItem('savedView');
+    }
+    return null;
+  };
+
+  const [currentCall, setCurrentCallState] = useState(restoreCurrentCall);
+
+  // Wrapper to persist currentCall to sessionStorage
+  const setCurrentCall = (call) => {
+    setCurrentCallState(call);
+    if (call && call.id) {
+      // Only persist active or ringing calls
+      const status = String(call.status || '').toLowerCase();
+      if (status === 'active' || status === 'ringing') {
+        try {
+          sessionStorage.setItem('currentCall', JSON.stringify(call));
+          console.log('[App] 💾 Saved call state to sessionStorage', {
+            callId: call.id,
+            status: call.status,
+          });
+        } catch (e) {
+          console.warn('[App] Failed to save call to sessionStorage', e);
+        }
+      } else {
+        // Clear ended/rejected calls
+        sessionStorage.removeItem('currentCall');
+        sessionStorage.removeItem('savedView');
+      }
+    } else {
+      // Clear when call is null
+      sessionStorage.removeItem('currentCall');
+      sessionStorage.removeItem('savedView');
+    }
+  };
   const [uploadedChunksCount, setUploadedChunksCount] = useState(0); // Track number of chunks uploaded
   const [incomingCallPayload, setIncomingCallPayload] = useState(null);
   const audioPlayerRef = useRef(null);
@@ -185,6 +309,225 @@ export default function App() {
     },
     [myPhoneNumber],
   );
+
+  // Save state immediately when connectivity changes (before mobile reload)
+  useEffect(() => {
+    // Save current call state synchronously when connectivity changes
+    // This must happen BEFORE the mobile browser potentially reloads
+    if (currentCall && currentCall.id) {
+      const status = String(currentCall.status || '').toLowerCase();
+      if (status === 'active' || status === 'ringing') {
+        try {
+          sessionStorage.setItem('currentCall', JSON.stringify(currentCall));
+          sessionStorage.setItem('savedView', viewRef.current || view);
+          console.log(
+            '[App] 💾 Emergency save: Saved call state on connectivity change',
+            {
+              callId: currentCall.id,
+              status: currentCall.status,
+              view: viewRef.current || view,
+              isOnline,
+            },
+          );
+        } catch (e) {
+          console.warn('[App] Failed emergency save on connectivity change', e);
+        }
+      }
+    }
+  }, [isOnline, currentCall?.id]); // Save whenever connectivity OR call changes
+
+  // Handle pageshow event (fires when page is restored from bfcache or after reload)
+  useEffect(() => {
+    const handlePageShow = (e) => {
+      console.log('[App] 📄 pageshow event fired', {
+        persisted: e.persisted, // true if restored from bfcache
+        timestamp: new Date().toISOString(),
+      });
+
+      // If page was restored from cache, state should still be in memory
+      // If page was reloaded, we need to restore from sessionStorage
+      if (!e.persisted && myPhoneNumber) {
+        // Page was reloaded, restore state
+        const restoreCallState = async () => {
+          try {
+            const savedCallStr = sessionStorage.getItem('currentCall');
+            const savedViewStr = sessionStorage.getItem('savedView');
+
+            if (savedCallStr && savedViewStr) {
+              const savedCall = JSON.parse(savedCallStr);
+              const status = String(savedCall.status || '').toLowerCase();
+
+              if (status === 'active' || status === 'ringing') {
+                console.log(
+                  '[App] 🔄 Restoring call state after pageshow reload',
+                  {
+                    callId: savedCall.id,
+                    status: savedCall.status,
+                    savedView: savedViewStr,
+                  },
+                );
+
+                // Immediately set the call state (don't wait for DB fetch)
+                setCurrentCall(savedCall);
+                setView(savedViewStr);
+
+                // Then fetch fresh data in background
+                try {
+                  const freshCall = await fetchCallById(savedCall.id);
+                  if (freshCall) {
+                    const freshStatus = String(
+                      freshCall.status || '',
+                    ).toLowerCase();
+                    if (freshStatus === 'active' || freshStatus === 'ringing') {
+                      setCurrentCall(freshCall);
+                      // Update view based on fresh status
+                      if (freshStatus === 'ringing') {
+                        const myNorm = normalizeNumber(myPhoneNumber);
+                        const toNorm = normalizeNumber(
+                          freshCall.to_number || '',
+                        );
+                        const fromNorm = normalizeNumber(
+                          freshCall.from_number || '',
+                        );
+                        if (toNorm === myNorm) {
+                          setView('incoming');
+                        } else if (fromNorm === myNorm) {
+                          setView('calling');
+                        }
+                      } else if (freshStatus === 'active') {
+                        const targetView = isOnline ? 'calling' : 'connected';
+                        setView(targetView);
+                      }
+                    } else {
+                      // Call ended, clear state
+                      sessionStorage.removeItem('currentCall');
+                      sessionStorage.removeItem('savedView');
+                      setCurrentCall(null);
+                      setView('dialer');
+                    }
+                  }
+                } catch (err) {
+                  console.warn(
+                    '[App] Failed to fetch fresh call after pageshow',
+                    err,
+                  );
+                  // Keep the restored state even if fetch fails
+                }
+              }
+            }
+          } catch (e) {
+            console.warn(
+              '[App] Failed to restore call state after pageshow',
+              e,
+            );
+          }
+        };
+
+        restoreCallState();
+      }
+    };
+
+    window.addEventListener('pageshow', handlePageShow);
+    return () => {
+      window.removeEventListener('pageshow', handlePageShow);
+    };
+  }, [myPhoneNumber, isOnline]);
+
+  // Restore call state on mount if page was reloaded (mobile connectivity issue)
+  useEffect(() => {
+    if (!myPhoneNumber) return; // Wait for phone number to be set
+
+    const restoreCallState = async () => {
+      try {
+        const savedCallStr = sessionStorage.getItem('currentCall');
+        const savedViewStr = sessionStorage.getItem('savedView');
+
+        if (savedCallStr && savedViewStr) {
+          const savedCall = JSON.parse(savedCallStr);
+          const status = String(savedCall.status || '').toLowerCase();
+
+          // Only restore if call is still active or ringing
+          if (status === 'active' || status === 'ringing') {
+            console.log('[App] 🔄 Restoring call state after page reload', {
+              callId: savedCall.id,
+              status: savedCall.status,
+              savedView: savedViewStr,
+            });
+
+            // Fetch fresh call data from database
+            try {
+              const freshCall = await fetchCallById(savedCall.id);
+              if (freshCall) {
+                const freshStatus = String(
+                  freshCall.status || '',
+                ).toLowerCase();
+
+                if (freshStatus === 'active' || freshStatus === 'ringing') {
+                  // Call is still active, restore it
+                  setCurrentCall(freshCall);
+
+                  // Determine the correct view based on call status and connectivity
+                  if (freshStatus === 'ringing') {
+                    const myNorm = normalizeNumber(myPhoneNumber);
+                    const toNorm = normalizeNumber(freshCall.to_number || '');
+                    const fromNorm = normalizeNumber(
+                      freshCall.from_number || '',
+                    );
+
+                    if (toNorm === myNorm) {
+                      // We're the recipient
+                      setView('incoming');
+                    } else if (fromNorm === myNorm) {
+                      // We're the caller
+                      setView('calling');
+                    } else {
+                      // Not for us, clear it
+                      sessionStorage.removeItem('currentCall');
+                      sessionStorage.removeItem('savedView');
+                    }
+                  } else if (freshStatus === 'active') {
+                    // Active call - show calling view if online, connected if offline
+                    const targetView = isOnline ? 'calling' : 'connected';
+                    setView(targetView);
+                  }
+                } else {
+                  // Call has ended, clear saved state
+                  console.log('[App] Call has ended, clearing saved state', {
+                    callId: freshCall.id,
+                    status: freshStatus,
+                  });
+                  sessionStorage.removeItem('currentCall');
+                  sessionStorage.removeItem('savedView');
+                }
+              } else {
+                // Call not found, clear saved state
+                console.log(
+                  '[App] Call not found in database, clearing saved state',
+                );
+                sessionStorage.removeItem('currentCall');
+                sessionStorage.removeItem('savedView');
+              }
+            } catch (err) {
+              console.warn('[App] Failed to fetch call during restore', err);
+              // On error, still try to restore from saved state
+              setCurrentCall(savedCall);
+              setView(savedViewStr);
+            }
+          } else {
+            // Call has ended, clear saved state
+            sessionStorage.removeItem('currentCall');
+            sessionStorage.removeItem('savedView');
+          }
+        }
+      } catch (e) {
+        console.warn('[App] Failed to restore call state', e);
+        sessionStorage.removeItem('currentCall');
+        sessionStorage.removeItem('savedView');
+      }
+    };
+
+    restoreCallState();
+  }, [myPhoneNumber, isOnline]); // Run when phone number is set and connectivity changes
 
   useEffect(() => {
     // keep refs to subscriptions so we can cleanup precisely
@@ -541,16 +884,59 @@ export default function App() {
 
   // Refresh users list when entering dialer view
   // Also force-end any active calls (edge case handling)
+  // IMPORTANT: Don't clear calls if we're transitioning from connected/calling view
   useEffect(() => {
     if (view === 'dialer' && myPhoneNumber) {
+      // Check if we have a currentCall - if so, don't force-end it
+      // This prevents clearing calls during connectivity transitions
+      const hasActiveCall =
+        currentCall &&
+        String(currentCall.status || '').toLowerCase() === 'active';
+      const previousView = viewRef.current;
+
+      // If we're coming from connected/calling view, preserve the call
+      if (
+        hasActiveCall &&
+        (previousView === 'connected' || previousView === 'calling')
+      ) {
+        console.log(
+          '[App] ⚠️ Entered dialer view but have active call from connected/calling - preserving call',
+          {
+            callId: currentCall.id,
+            previousView: previousView,
+            currentView: view,
+          },
+        );
+        // Switch back to calling view instead of clearing
+        setView('calling');
+        return; // Exit early - don't clear the call
+      }
+
       console.log('[App] Refreshing users list - entered dialer view');
       refreshUsersList(processUsersList);
 
       // Edge case: If user enters dialer view but has an active call, force end it
+      // Only do this if we're not transitioning from a call view
       (async () => {
         try {
           const activeCallId = await fetchActiveCallId(myPhoneNumber);
           if (activeCallId) {
+            // Double-check: if we have currentCall, don't clear it if we're transitioning
+            if (currentCall && currentCall.id === activeCallId) {
+              const prevView = viewRef.current;
+              if (prevView === 'connected' || prevView === 'calling') {
+                console.log(
+                  '[App] ⚠️ Active call found but preserving due to transition from call view',
+                  {
+                    callId: activeCallId,
+                    previousView: prevView,
+                  },
+                );
+                setView('calling');
+                return; // Don't end the call
+              }
+            }
+
             console.warn(
               '[App] Edge case detected: Active call found when entering dialer view. Force ending call:',
               activeCallId,
@@ -882,7 +1268,7 @@ export default function App() {
 
               // Wait for this chunk to finish playing before moving to the next
               try {
-                await new Promise((resolve) => {
+                await new Promise(async (resolve) => {
                   // Clean up any previous audio first
                   if (currentAudioRef.current) {
                     try {
@@ -897,6 +1283,24 @@ export default function App() {
                   currentAudioRef.current = audio;
                   audio.volume = 1.0;
                   audio.preload = 'auto';
+
+                  // Wait for audio to be ready before playing (fixes jittering)
+                  const waitForReady = new Promise((readyResolve) => {
+                    const checkReady = () => {
+                      if (audio.readyState >= 3) {
+                        // HAVE_FUTURE_DATA or higher
+                        readyResolve();
+                      } else {
+                        audio.addEventListener('canplay', checkReady, {
+                          once: true,
+                        });
+                        audio.addEventListener('canplaythrough', checkReady, {
+                          once: true,
+                        });
+                      }
+                    };
+                    checkReady();
+                  });
 
                   // Track progress within the chunk
                   const updateProgress = () => {
@@ -915,7 +1319,7 @@ export default function App() {
                   // Update progress periodically
                   const progressInterval = setInterval(updateProgress, 100);
 
-                  // Timeout fallback - if chunk doesn't end within 6 seconds, move on
+                  // Timeout fallback - if chunk doesn't end within 7 seconds, move on (increased from 6s)
                   const timeoutId = setTimeout(() => {
                     console.warn('[App] ⚠️ Chunk playback timeout', {
                       chunkId: chunk.id,
@@ -926,7 +1330,7 @@ export default function App() {
                     setCurrentPlayingChunkId(null);
                     currentAudioRef.current = null;
                     resolve();
-                  }, 6000);
+                  }, 7000);
 
                   audio.onloadedmetadata = () => {
                     console.log('[App] ✅ Chunk metadata loaded', {
@@ -937,6 +1341,13 @@ export default function App() {
 
                   audio.oncanplay = () => {
                     console.log('[App] ✅ Chunk can play', {
+                      chunkId: chunk.id,
+                      readyState: audio.readyState,
+                    });
+                  };
+
+                  audio.oncanplaythrough = () => {
+                    console.log('[App] ✅ Chunk can play through', {
                       chunkId: chunk.id,
                       readyState: audio.readyState,
                     });
@@ -970,96 +1381,113 @@ export default function App() {
                     resolve(); // Continue to next chunk
                   };
 
-                  // Start playing
-                  const playPromise = audio.play();
-                  if (playPromise !== undefined) {
-                    playPromise
-                      .then(() => {
-                        console.log('[App] ✅ Chunk started playing', {
-                          chunkId: chunk.id,
-                          duration: audio.duration,
-                        });
-                        if (chunk.id) {
-                          playedChunkIdsRef.current.add(chunk.id);
-                        }
-                      })
-                      .catch((err) => {
-                        console.error(
-                          '[App] ❌ Failed to start chunk playback',
-                          {
-                            chunkId: chunk.id,
-                            error: err,
-                            errorName: err.name,
-                            errorMessage: err.message,
-                            userAgent: navigator.userAgent,
-                          },
+                  // Wait for audio to be ready, then start playing
+                  try {
+                    await waitForReady;
+                    console.log('[App] ✅ Audio ready, starting playback', {
+                      chunkId: chunk.id,
+                      readyState: audio.readyState,
+                    });
+
+                    // Start playing
+                    const playPromise = audio.play();
+                    if (playPromise !== undefined) {
+                      await playPromise;
+                      console.log('[App] ✅ Chunk started playing', {
+                        chunkId: chunk.id,
+                        duration: audio.duration,
+                      });
+                      if (chunk.id) {
+                        playedChunkIdsRef.current.add(chunk.id);
+                      }
+                    } else {
+                      if (chunk.id) {
+                        playedChunkIdsRef.current.add(chunk.id);
+                      }
+                    }
+                  } catch (err) {
+                    console.error('[App] ❌ Failed to start chunk playback', {
+                      chunkId: chunk.id,
+                      error: err,
+                      errorName: err.name,
+                      errorMessage: err.message,
+                      userAgent: navigator.userAgent,
+                    });
+
+                    // On mobile, autoplay might be blocked - show user-friendly prompt
+                    if (
+                      err.name === 'NotAllowedError' ||
+                      err.name === 'NotSupportedError'
+                    ) {
+                      console.warn(
+                        '[App] ⚠️ Autoplay blocked - showing user prompt',
+                      );
+
+                      // Show alert to user
+                      const isMobile =
+                        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+                          navigator.userAgent,
                         );
 
-                        // On mobile, autoplay might be blocked
-                        if (
-                          err.name === 'NotAllowedError' ||
-                          err.name === 'NotSupportedError'
-                        ) {
-                          console.warn(
-                            '[App] ⚠️ Autoplay blocked - will try on user interaction',
-                          );
-                          const tryPlayOnInteraction = () => {
-                            audio
-                              .play()
-                              .then(() => {
-                                console.log(
-                                  '[App] ✅ Chunk started playing after user interaction',
-                                );
-                                if (chunk.id) {
-                                  playedChunkIdsRef.current.add(chunk.id);
-                                }
-                                document.removeEventListener(
-                                  'touchstart',
-                                  tryPlayOnInteraction,
-                                );
-                                document.removeEventListener(
-                                  'click',
-                                  tryPlayOnInteraction,
-                                );
-                              })
-                              .catch((retryErr) => {
-                                console.error(
-                                  '[App] ❌ Retry play also failed',
-                                  retryErr,
-                                );
-                                document.removeEventListener(
-                                  'touchstart',
-                                  tryPlayOnInteraction,
-                                );
-                                document.removeEventListener(
-                                  'click',
-                                  tryPlayOnInteraction,
-                                );
-                              });
-                          };
-                          document.addEventListener(
-                            'touchstart',
-                            tryPlayOnInteraction,
-                            { once: true },
-                          );
-                          document.addEventListener(
-                            'click',
-                            tryPlayOnInteraction,
-                            { once: true },
-                          );
-                        }
+                      if (isMobile && i === 0) {
+                        // Only show alert for first chunk to avoid spam
+                        alert(
+                          'Audio playback requires your permission.\n\nPlease tap the play button to start listening to the call recording.',
+                        );
+                      }
 
-                        clearTimeout(timeoutId);
-                        clearInterval(progressInterval);
-                        setCurrentPlayingChunkId(null);
-                        setCurrentChunkProgress(0);
-                        currentAudioRef.current = null;
-                        resolve();
+                      // Try to play on user interaction
+                      const tryPlayOnInteraction = () => {
+                        audio
+                          .play()
+                          .then(() => {
+                            console.log(
+                              '[App] ✅ Chunk started playing after user interaction',
+                            );
+                            if (chunk.id) {
+                              playedChunkIdsRef.current.add(chunk.id);
+                            }
+                            document.removeEventListener(
+                              'touchstart',
+                              tryPlayOnInteraction,
+                            );
+                            document.removeEventListener(
+                              'click',
+                              tryPlayOnInteraction,
+                            );
+                          })
+                          .catch((retryErr) => {
+                            console.error(
+                              '[App] ❌ Retry play also failed',
+                              retryErr,
+                            );
+                            document.removeEventListener(
+                              'touchstart',
+                              tryPlayOnInteraction,
+                            );
+                            document.removeEventListener(
+                              'click',
+                              tryPlayOnInteraction,
+                            );
+                          });
+                      };
+                      document.addEventListener(
+                        'touchstart',
+                        tryPlayOnInteraction,
+                        { once: true },
+                      );
+                      document.addEventListener('click', tryPlayOnInteraction, {
+                        once: true,
                       });
-                  } else {
-                    if (chunk.id) {
-                      playedChunkIdsRef.current.add(chunk.id);
                     }
+
+                    clearTimeout(timeoutId);
+                    clearInterval(progressInterval);
+                    setCurrentPlayingChunkId(null);
+                    setCurrentChunkProgress(0);
+                    currentAudioRef.current = null;
+                    resolve();
+                    return; // Exit early on error
                   }
                 });
               } catch (err) {
@@ -1167,6 +1595,19 @@ export default function App() {
             console.log(
               '[App] Auto-play attempts exhausted, user can click play button',
             );
+
+            // Show user-friendly prompt on mobile if autoplay failed
+            const isMobile =
+              /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+                navigator.userAgent,
+              );
+            if (isMobile) {
+              setTimeout(() => {
+                alert(
+                  'Audio playback requires your permission.\n\nPlease tap the play button (▶️) to start listening to the call recording.',
+                );
+              }, 500);
+            }
             return;
           }
 
@@ -1175,7 +1616,28 @@ export default function App() {
             if (controller) {
               controller.play().catch((err) => {
                 console.warn(`[App] Auto-play attempt ${attempt} failed`, err);
-                // Try again with longer delay
+
+                // If autoplay is blocked, show prompt immediately
+                if (
+                  err.name === 'NotAllowedError' ||
+                  err.name === 'NotSupportedError'
+                ) {
+                  const isMobile =
+                    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+                      navigator.userAgent,
+                    );
+                  if (isMobile && attempt === 1) {
+                    // Show alert on first attempt failure
+                    setTimeout(() => {
+                      alert(
+                        'Audio playback requires your permission.\n\nPlease tap the play button (▶️) to start listening to the call recording.',
+                      );
+                    }, 500);
+                  }
+                  return; // Don't retry if autoplay is blocked
+                }
+
+                // Try again with longer delay for other errors
                 if (attempt < 3) {
                   tryAutoPlay(attempt + 1);
                 }
@@ -1231,6 +1693,65 @@ export default function App() {
       // only proceed if we have a phone number
       if (!myPhoneNumber) return;
 
+      // CRITICAL FIX FOR MOBILE: If we have an active call and we're in connected/calling view,
+      // preserve it when coming back online - this MUST run FIRST before any other logic
+      // This prevents the call from being cleared during connectivity transitions
+      const earlyViewCheck = viewRef.current;
+      if (
+        isOnline &&
+        currentCall &&
+        currentCall.id &&
+        String(currentCall.status || '').toLowerCase() === 'active' &&
+        (earlyViewCheck === 'connected' ||
+          earlyViewCheck === 'calling' ||
+          view === 'connected' ||
+          view === 'calling')
+      ) {
+        console.log(
+          '[connectivity effect] 🛡️ EARLY GUARD: Preserving active call when coming back online',
+          {
+            callId: currentCall.id,
+            earlyViewCheck: earlyViewCheck,
+            viewState: view,
+            viewRef: viewRef.current,
+            isOnline,
+          },
+        );
+        // Immediately switch to calling view and preserve the call
+        setView('calling');
+        // Refresh call state but don't clear it
+        try {
+          const fresh = await fetchCallById(currentCall.id);
+          if (!mounted) return;
+          if (fresh) {
+            const s = String(fresh.status || '').toLowerCase();
+            if (s === 'ended' || s === 'rejected') {
+              // Only clear if call is actually ended
+              try {
+                stopRecording();
+                setUploadProgressCallback(null);
+                setUploadedChunksCount(0);
+              } catch (e) {}
+              try {
+                await unsubscribeAudio();
+              } catch (e) {}
+              setCurrentCall(fresh);
+              setView('end');
+              return;
+            }
+            // Update with fresh data but keep it active
+            setCurrentCall(fresh);
+          }
+        } catch (err) {
+          console.warn(
+            'fetchCallById (early guard - preserving active call) failed',
+            err,
+          );
+          // Don't clear on error - preserve the call
+        }
+        return; // Exit early - we've handled the transition, don't run any other logic
+      }
+
       // Don't interfere if we have an ended call - let the user dismiss it first via handleEndDone
       if (
         currentCall &&
@@ -1241,6 +1762,58 @@ export default function App() {
       }
 
       if (isOnline) {
+        // IMPORTANT: If we're coming back online from 'connected' view with an active call,
+        // preserve the call and switch to 'calling' view - don't clear it
+        // Use viewRef.current to get the current view state (avoids stale closure on mobile)
+        const currentView = viewRef.current;
+        if (
+          (currentView === 'connected' || view === 'connected') &&
+          currentCall &&
+          currentCall.id
+        ) {
+          const callStatus = String(currentCall.status || '').toLowerCase();
+          if (callStatus === 'active') {
+            console.log(
+              '[connectivity effect] Coming back online from connected view - preserving call and switching to calling view',
+              {
+                callId: currentCall.id,
+                currentView: currentView,
+                viewState: view,
+                viewRef: viewRef.current,
+              },
+            );
+            setView('calling');
+            // Still refresh the call state, but don't clear it
+            try {
+              const fresh = await fetchCallById(currentCall.id);
+              if (!mounted) return;
+              if (fresh) {
+                const s = String(fresh.status || '').toLowerCase();
+                // Only update if call is ended/rejected - otherwise preserve active call
+                if (s === 'ended' || s === 'rejected') {
+                  try {
+                    stopRecording();
+                    setUploadProgressCallback(null);
+                    setUploadedChunksCount(0);
+                  } catch (e) {}
+                  try {
+                    await unsubscribeAudio();
+                  } catch (e) {}
+                  setCurrentCall(fresh);
+                  setView('end');
+                  return;
+                }
+                // Update call with fresh data but keep it active
+                setCurrentCall(fresh);
+              }
+            } catch (err) {
+              console.warn('fetchCallById (coming back online) failed', err);
+              // Don't clear the call on error - preserve it
+            }
+            return; // Exit early - we've handled the transition
+          }
+        }
+
         // If we already have a current call, refresh its server-side state
         if (currentCall && currentCall.id) {
           try {
@@ -1299,9 +1872,11 @@ export default function App() {
                       myNorm,
                     },
                   );
-                  // Clear the call if it's not for us and return to dialer
-                  setCurrentCall(null);
-                  setView('dialer');
+                  // Only clear if we're not in an active call view (preserve if in connected/calling)
+                  if (view !== 'connected' && view !== 'calling') {
+                    setCurrentCall(null);
+                    setView('dialer');
+                  }
                 }
                 return;
               }
@@ -1369,7 +1944,9 @@ export default function App() {
           }
         }
 
-        // If we already have a current call that is active, show live calling UI (only if call is for us)
+        // If we already have a current call that is active, show live calling UI
+        // IMPORTANT: If we're coming back online from 'connected' view, preserve the call
+        // and go back to 'calling' view - don't clear it unless it's actually ended
         if (
           currentCall &&
           String(currentCall.status || '').toLowerCase() === 'active'
@@ -1387,14 +1964,62 @@ export default function App() {
               '',
           );
           const myNorm = normalizeNumber(myPhoneNumber);
+          const currentView = viewRef.current; // Use ref to avoid stale closure
 
           // Show calling view if we're the recipient (to_number) or the caller (from_number)
-          if (callToNumber === myNorm || callFromNumber === myNorm) {
+          // OR if we're in connected/calling view (preserve the call)
+          if (
+            callToNumber === myNorm ||
+            callFromNumber === myNorm ||
+            currentView === 'connected' ||
+            currentView === 'calling' ||
+            view === 'connected' ||
+            view === 'calling'
+          ) {
+            console.log(
+              '[connectivity effect] Returning to calling view for active call',
+              {
+                callId: currentCall.id,
+                callToNumber,
+                callFromNumber,
+                myNorm,
+                currentView: currentView,
+                viewState: view,
+                viewRef: viewRef.current,
+                isPartOfCall:
+                  callToNumber === myNorm || callFromNumber === myNorm,
+                isInCallView:
+                  currentView === 'connected' || currentView === 'calling',
+              },
+            );
+            // Always preserve the call and go to calling view if we have an active call
             setView('calling');
           } else {
-            // Clear the call if it's not for us and return to dialer
-            setCurrentCall(null);
-            setView('dialer');
+            // Only clear if we're definitely not part of the call AND not in a call view
+            // This should rarely happen, but if it does, log it for debugging
+            console.warn(
+              '[connectivity effect] ⚠️ Active call found but user not part of it and not in call view',
+              {
+                callId: currentCall.id,
+                callToNumber,
+                callFromNumber,
+                myNorm,
+                currentView: currentView,
+                viewState: view,
+              },
+            );
+            // Still preserve if we're transitioning - don't clear during transitions
+            if (
+              currentView === 'connected' ||
+              currentView === 'calling' ||
+              view === 'connected' ||
+              view === 'calling'
+            ) {
+              setView('calling');
+            } else {
+              setCurrentCall(null);
+              setView('dialer');
+            }
           }
           return;
         }
@@ -2084,6 +2709,8 @@ export default function App() {
           onEnd={handleEnd}
           audioStream={getCurrentAudioStream()}
           uploadedChunksCount={uploadedChunksCount}
+          myPhoneNumber={myPhoneNumber}
+          myUsername={myUsername}
         />
       )}
       {view === 'connected' && currentCall && (
