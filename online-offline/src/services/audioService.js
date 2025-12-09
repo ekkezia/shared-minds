@@ -308,32 +308,65 @@ export async function startRecording(callId, myPhoneNumber) {
       '[startRecording] ⚠️ No supported audio format found, using default',
     );
   }
+  // Check if this is a restart for the same call (preserve chunkIndex) or a new call (reset chunkIndex)
+  const isRestartForSameCall = currentCallId === callId;
+
   // If already recording for this call, don't restart
   if (
-    currentCallId === callId &&
+    isRestartForSameCall &&
     mediaRecorder &&
     mediaRecorder.state === 'recording'
   ) {
     console.log('[startRecording] Already recording for this call, skipping', {
       callId,
       currentState: mediaRecorder.state,
+      currentChunkIndex: chunkIndex,
     });
     return;
   }
 
-  // Stop any existing recording first
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    console.log(
-      '[startRecording] Stopping existing recording before starting new one',
-      {
-        callId,
-        currentState: mediaRecorder.state,
-      },
-    );
-    try {
-      stopRecording();
-    } catch (e) {
-      console.warn('[startRecording] Error stopping existing recording', e);
+  // Stop any existing recording first (but preserve chunkIndex if same call)
+  // Only stop if MediaRecorder exists and is in a state that needs stopping
+  if (mediaRecorder) {
+    const needsStopping =
+      mediaRecorder.state === 'recording' || mediaRecorder.state === 'paused';
+    if (needsStopping) {
+      console.log(
+        '[startRecording] Stopping existing recording before starting new one',
+        {
+          callId,
+          currentState: mediaRecorder.state,
+          isRestartForSameCall,
+          currentChunkIndex: chunkIndex,
+        },
+      );
+      try {
+        // Pass a flag to stopRecording to preserve chunkIndex if restarting for same call
+        stopRecording(!isRestartForSameCall); // true = reset chunkIndex, false = preserve it
+      } catch (e) {
+        console.warn('[startRecording] Error stopping existing recording', e);
+      }
+    } else {
+      console.log(
+        '[startRecording] MediaRecorder exists but in inactive state, cleaning up',
+        {
+          callId,
+          currentState: mediaRecorder.state,
+          isRestartForSameCall,
+          currentChunkIndex: chunkIndex,
+        },
+      );
+      // Clean up inactive MediaRecorder but preserve chunkIndex if same call
+      mediaRecorder = null;
+      if (currentAudioStream) {
+        currentAudioStream.getTracks().forEach((track) => track.stop());
+        currentAudioStream = null;
+      }
+      // Don't reset chunkIndex or currentCallId if restarting for same call
+      if (!isRestartForSameCall) {
+        currentCallId = null;
+        chunkIndex = 0;
+      }
     }
   }
 
@@ -345,7 +378,23 @@ export async function startRecording(callId, myPhoneNumber) {
   isRestarting = false;
 
   currentCallId = callId;
-  chunkIndex = 0;
+
+  // Only reset chunkIndex if this is a NEW call, not a restart for the same call
+  if (!isRestartForSameCall) {
+    chunkIndex = 0;
+    console.log('[startRecording] New call - resetting chunkIndex to 0', {
+      callId,
+    });
+  } else {
+    console.log(
+      '[startRecording] Restarting for same call - preserving chunkIndex',
+      {
+        callId,
+        preservedChunkIndex: chunkIndex,
+      },
+    );
+  }
+
   isProcessingChunk = false; // Reset processing flag
   lastChunkProcessedTime = 0; // Reset timestamp
   processedChunkIds.clear(); // Clear processed chunk IDs for new recording session
@@ -1178,7 +1227,7 @@ export async function startRecording(callId, myPhoneNumber) {
   return mediaRecorder;
 }
 
-export function stopRecording() {
+export function stopRecording(resetChunkIndex = true) {
   // Clear any pending restart
   if (restartTimeoutId) {
     clearTimeout(restartTimeoutId);
@@ -1202,6 +1251,7 @@ export function stopRecording() {
         callId,
         state: mediaRecorder.state,
         totalChunks: chunkIndex,
+        resetChunkIndex,
       });
       // Request final chunk before stopping
       try {
@@ -1214,6 +1264,7 @@ export function stopRecording() {
       console.log('[stopRecording] MediaRecorder not recording, cleaning up', {
         callId,
         state: mediaRecorder.state,
+        resetChunkIndex,
       });
     }
   }
@@ -1225,13 +1276,36 @@ export function stopRecording() {
   }
 
   mediaRecorder = null;
-  currentCallId = null;
-  chunkIndex = 0;
+
+  // Only reset chunkIndex and currentCallId if explicitly requested (new call or call ended)
+  // If resetChunkIndex is false, we're just pausing (going offline) and will resume later
+  if (resetChunkIndex) {
+    const preservedCallId = currentCallId;
+    currentCallId = null;
+    chunkIndex = 0;
+    console.log('[stopRecording] Resetting chunkIndex and clearing callId', {
+      resetChunkIndex,
+      previousCallId: preservedCallId,
+    });
+  } else {
+    // Preserve both chunkIndex and currentCallId for restart
+    console.log(
+      '[stopRecording] Preserving chunkIndex and callId for restart',
+      {
+        preservedChunkIndex: chunkIndex,
+        preservedCallId: currentCallId,
+      },
+    );
+  }
+
   isProcessingChunk = false; // Reset processing flag
   lastChunkProcessedTime = 0; // Reset timestamp
   processedChunkIds.clear(); // Clear processed chunk IDs
 
-  console.log('[stopRecording] ✅ Recording stopped and cleaned up');
+  console.log('[stopRecording] ✅ Recording stopped and cleaned up', {
+    resetChunkIndex,
+    chunkIndex,
+  });
 }
 
 /**

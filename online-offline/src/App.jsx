@@ -1219,14 +1219,32 @@ export default function App() {
           });
         }
 
-        // Set chunks for visual timeline (show ALL chunks)
-        setPlaybackChunks(otherPartyChunks);
+        // Set chunks for visual timeline
+        // For DualTimeline, we need ALL chunks (both parties) to show both timelines
+        // For the chunk scrubber, we'll filter to show only other party chunks
+        // The playback controller will use otherPartyChunks for actual playback
+        console.log('[App] Setting playback chunks', {
+          totalChunks: historicalChunks.length,
+          otherPartyChunks: otherPartyChunks.length,
+          myChunks: historicalChunks.length - otherPartyChunks.length,
+        });
+
+        // Set ALL chunks for DualTimeline visualization (needs both parties)
+        // The view will filter to other party chunks for the scrubber display
+        setPlaybackChunks(historicalChunks);
         setIsPlaying(false); // Will be set to true when play() is called
         playbackAbortRef.current = false;
 
         if (otherPartyChunks.length === 0) {
-          console.warn('[App] ⚠️ No chunks found in cache - nothing to play');
-          return;
+          console.warn(
+            '[App] ⚠️ No chunks found from other party - nothing to play',
+            {
+              totalChunks: historicalChunks.length,
+              myChunks: historicalChunks.length,
+            },
+          );
+          // Still show the timeline even if no other party chunks (will show empty timeline)
+          // Don't return early - let the controller be created even with 0 chunks
         }
 
         // Clear played chunks so we can start fresh from the first chunk of current session
@@ -1747,7 +1765,8 @@ export default function App() {
           state: 'playback',
           isOnline: false,
         });
-        stopRecording();
+        // Don't reset chunkIndex when going offline - we'll resume from where we left off
+        stopRecording(false); // false = preserve chunkIndex
         // Clear upload progress callback
         setUploadProgressCallback(null);
         // Reset chunk counter
@@ -2224,7 +2243,8 @@ export default function App() {
             state: 'playback',
             isOnline: false,
           });
-          stopRecording();
+          // Don't reset chunkIndex when going offline - we'll resume from where we left off
+          stopRecording(false); // false = preserve chunkIndex
           // Clear upload progress callback
           setUploadProgressCallback(null);
           // Reset chunk counter

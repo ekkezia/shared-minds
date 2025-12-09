@@ -17,15 +17,29 @@ export default function CallConnectedView({
 }) {
   const timelineRef = useRef(null);
 
+  // Filter chunks to only show other party's chunks for the scrubber
+  // (DualTimeline needs all chunks, but scrubber should only show playable chunks)
+  const normalize = (s) => String(s || '').replace(/\D/g, '');
+  const myNorm = normalize(myPhoneNumber);
+  const playbackChunks = useMemo(() => {
+    return chunks.filter((chunk) => {
+      return normalize(chunk.from_number || '') !== myNorm;
+    });
+  }, [chunks, myPhoneNumber, myNorm]);
+
   // Auto-scroll to keep the currently playing chunk visible
   // Only scroll when the chunk ID changes, not on every progress update
   useEffect(() => {
-    if (!timelineRef.current || !currentPlayingChunkId || chunks.length === 0) {
+    if (
+      !timelineRef.current ||
+      !currentPlayingChunkId ||
+      playbackChunks.length === 0
+    ) {
       return;
     }
 
     const timeline = timelineRef.current;
-    const currentIndex = chunks.findIndex(
+    const currentIndex = playbackChunks.findIndex(
       (c) => c.id === currentPlayingChunkId,
     );
 
@@ -55,16 +69,17 @@ export default function CallConnectedView({
         behavior: 'smooth',
       });
     }
-  }, [currentPlayingChunkId, chunks]); // Removed currentChunkProgress from dependencies
+  }, [currentPlayingChunkId, playbackChunks]); // Use playbackChunks instead of chunks
   // Calculate total duration (each chunk is ~5 seconds)
-  const totalDuration = chunks.length * 5;
-  const chunkWidthPercent = chunks.length > 0 ? 100 / chunks.length : 0;
+  const totalDuration = playbackChunks.length * 5;
+  const chunkWidthPercent =
+    playbackChunks.length > 0 ? 100 / playbackChunks.length : 0;
 
   // Calculate scrubber position (in pixels, not percentage)
   const scrubberPosition = useMemo(() => {
-    if (!currentPlayingChunkId || chunks.length === 0) return 0;
+    if (!currentPlayingChunkId || playbackChunks.length === 0) return 0;
 
-    const currentIndex = chunks.findIndex(
+    const currentIndex = playbackChunks.findIndex(
       (c) => c.id === currentPlayingChunkId,
     );
     if (currentIndex === -1) return 0;
@@ -73,7 +88,7 @@ export default function CallConnectedView({
     const basePosition = currentIndex * 80;
     const progressOffset = currentChunkProgress * 80;
     return basePosition + progressOffset;
-  }, [currentPlayingChunkId, currentChunkProgress, chunks]);
+  }, [currentPlayingChunkId, currentChunkProgress, playbackChunks]);
 
   return (
     <div class='screen dialer-screen'>
@@ -99,8 +114,8 @@ export default function CallConnectedView({
         />
       )}
 
-      {/* Visual Timeline */}
-      {chunks.length > 0 && (
+      {/* Visual Timeline - Only show if we have chunks to play back */}
+      {playbackChunks.length > 0 && (
         <div
           style={{
             width: '90%',
@@ -143,11 +158,11 @@ export default function CallConnectedView({
                 Math.min(1, (totalX % 80) / 80),
               );
 
-              if (chunkIndex >= 0 && chunkIndex < chunks.length) {
+              if (chunkIndex >= 0 && chunkIndex < playbackChunks.length) {
                 console.log('[CallConnectedView] Seeking to chunk', {
                   chunkIndex,
                   progressInChunk,
-                  chunkId: chunks[chunkIndex].id,
+                  chunkId: playbackChunks[chunkIndex].id,
                   wasPlaying: isPlaying,
                 });
                 const wasPlaying = isPlaying;
@@ -165,15 +180,17 @@ export default function CallConnectedView({
             <div
               style={{
                 position: 'relative',
-                width: `${chunks.length * 80}px`, // Fixed width per chunk (80px each)
+                width: `${playbackChunks.length * 80}px`, // Fixed width per chunk (80px each)
                 height: '100%',
                 minWidth: '100%',
               }}
             >
-              {chunks.map((chunk, index) => {
+              {playbackChunks.map((chunk, index) => {
                 const isPlaying = chunk.id === currentPlayingChunkId;
                 const currentIndex = currentPlayingChunkId
-                  ? chunks.findIndex((c) => c.id === currentPlayingChunkId)
+                  ? playbackChunks.findIndex(
+                      (c) => c.id === currentPlayingChunkId,
+                    )
                   : -1;
                 const isPlayed = currentIndex > index;
 
@@ -204,7 +221,7 @@ export default function CallConnectedView({
                       boxSizing: 'border-box',
                       marginRight: '5px',
                     }}
-                    title={`Chunk ${index + 1}/${chunks.length}${
+                    title={`Chunk ${index + 1}/${playbackChunks.length}${
                       isPlaying ? ' (Playing)' : ''
                     } - ${chunk.id || 'no-id'}`}
                   >
@@ -232,7 +249,7 @@ export default function CallConnectedView({
             {/* Progress indicator for current chunk */}
             {currentPlayingChunkId &&
               (() => {
-                const currentIndex = chunks.findIndex(
+                const currentIndex = playbackChunks.findIndex(
                   (c) => c.id === currentPlayingChunkId,
                 );
                 if (currentIndex === -1) return null;
@@ -263,12 +280,14 @@ export default function CallConnectedView({
           >
             {currentPlayingChunkId
               ? `Playing chunk ${
-                  chunks.findIndex((c) => c.id === currentPlayingChunkId) + 1
-                } of ${chunks.length} (${Math.round(
+                  playbackChunks.findIndex(
+                    (c) => c.id === currentPlayingChunkId,
+                  ) + 1
+                } of ${playbackChunks.length} (${Math.round(
                   currentChunkProgress * 100,
                 )}%)`
-              : chunks.length > 0
-              ? `Ready to play ${chunks.length} chunks`
+              : playbackChunks.length > 0
+              ? `Ready to play ${playbackChunks.length} chunks`
               : 'No chunks available'}
           </div>
         </div>
