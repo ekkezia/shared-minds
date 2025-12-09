@@ -1,5 +1,6 @@
 // src/views/CallConnectedView.jsx
 import { useMemo, useState, useRef } from 'preact/hooks';
+import DualTimeline from '../components/DualTimeline.jsx';
 
 export default function CallConnectedView({
   call,
@@ -9,6 +10,10 @@ export default function CallConnectedView({
   currentChunkProgress = 0,
   isPlaying = false,
   playbackController = null,
+  myPhoneNumber = '',
+  callStartTime = null,
+  myStateHistory = [],
+  otherStateHistory = [],
 }) {
   const timelineRef = useRef(null);
   // Calculate total duration (each chunk is ~5 seconds)
@@ -41,6 +46,18 @@ export default function CallConnectedView({
             : 'Loading audio chunks...'}
         </div>
       </div>
+
+      {/* Dual Timeline Visualization */}
+      {callStartTime && chunks.length > 0 && (
+        <DualTimeline
+          call={call}
+          chunks={chunks}
+          myPhoneNumber={myPhoneNumber}
+          callStartTime={callStartTime}
+          myStateHistory={myStateHistory}
+          otherStateHistory={otherStateHistory}
+        />
+      )}
 
       {/* Visual Timeline */}
       {chunks.length > 0 && (

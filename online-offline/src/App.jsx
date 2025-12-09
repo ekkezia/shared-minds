@@ -7,6 +7,7 @@ import DialerView from './views/DialerView.jsx';
 import IncomingCallView from './views/IncomingCallView.jsx';
 import CallingView from './views/CallingView.jsx';
 import CallConnectedView from './views/CallConnectedView.jsx';
+import DualTimeline from './components/DualTimeline.jsx';
 import EndCallView from './views/EndCallView.jsx';
 
 import {
@@ -213,6 +214,12 @@ export default function App() {
   const currentAudioRef = useRef(null); // Reference to current audio element
   const playbackAbortRef = useRef(false); // Flag to abort playback
   const isPlayingRef = useRef(false); // Ref to track playing state for closures
+  const lastOfflineTimestampRef = useRef(null); // Track when we last went offline (to find first chunk of current online session)
+  const firstChunkOfCurrentSessionRef = useRef(null); // Track the first chunk ID of the current online session
+
+  // Track state history for dual timeline visualization
+  const myStateHistoryRef = useRef([]); // Array of {timestamp, state: 'recording'|'playback', isOnline}
+  const otherStateHistoryRef = useRef([]); // Array of {timestamp, state: 'recording'|'playback'}
 
   const isOnline = useOnlineStatus();
 
@@ -1175,7 +1182,44 @@ export default function App() {
           );
         });
 
-        // Set chunks for visual timeline
+        // Find the first chunk of the current online session
+        // This is the first chunk created after we last went offline
+        let firstChunkOfCurrentSessionIndex = 0;
+        if (lastOfflineTimestampRef.current && otherPartyChunks.length > 0) {
+          const offlineTimestamp = new Date(lastOfflineTimestampRef.current);
+          console.log('[App] Finding first chunk of current online session', {
+            offlineTimestamp: lastOfflineTimestampRef.current,
+            totalChunks: otherPartyChunks.length,
+          });
+
+          // Find the first chunk created after we went offline
+          for (let i = 0; i < otherPartyChunks.length; i++) {
+            const chunk = otherPartyChunks[i];
+            if (chunk.created_at) {
+              const chunkDate = new Date(chunk.created_at);
+              if (chunkDate > offlineTimestamp) {
+                firstChunkOfCurrentSessionIndex = i;
+                firstChunkOfCurrentSessionRef.current = chunk.id;
+                console.log('[App] Found first chunk of current session', {
+                  chunkIndex: i,
+                  chunkId: chunk.id,
+                  chunkCreatedAt: chunk.created_at,
+                  offlineTimestamp: lastOfflineTimestampRef.current,
+                });
+                break;
+              }
+            }
+          }
+        } else if (otherPartyChunks.length > 0) {
+          // If no offline timestamp, use the first chunk
+          firstChunkOfCurrentSessionIndex = 0;
+          firstChunkOfCurrentSessionRef.current = otherPartyChunks[0].id;
+          console.log('[App] No offline timestamp - using first chunk', {
+            chunkId: otherPartyChunks[0].id,
+          });
+        }
+
+        // Set chunks for visual timeline (show ALL chunks)
         setPlaybackChunks(otherPartyChunks);
         setIsPlaying(false); // Will be set to true when play() is called
         playbackAbortRef.current = false;
@@ -1185,7 +1229,20 @@ export default function App() {
           return;
         }
 
+        // Clear played chunks so we can start fresh from the first chunk of current session
+        playedChunkIdsRef.current.clear();
+        console.log(
+          '[App] Cleared played chunks - will start from first chunk of current session',
+          {
+            firstChunkIndex: firstChunkOfCurrentSessionIndex,
+            firstChunkId: firstChunkOfCurrentSessionRef.current,
+            totalChunks: otherPartyChunks.length,
+          },
+        );
+
         // Create playback controller
+        // Capture the first chunk index in closure
+        const firstChunkIndex = firstChunkOfCurrentSessionIndex;
         const controller = {
           play: async () => {
             if (isPlayingRef.current) {
@@ -1208,15 +1265,22 @@ export default function App() {
             }
 
             // Find the first unplayed chunk or continue from current
-            let startIndex = 0;
+            // Start from the first chunk of the current online session
+            let startIndex = firstChunkIndex;
             if (currentPlayingChunkId) {
               const currentIndex = otherPartyChunks.findIndex(
                 (c) => c.id === currentPlayingChunkId,
               );
-              if (currentIndex !== -1) {
+              if (currentIndex !== -1 && currentIndex >= firstChunkIndex) {
                 startIndex = currentIndex;
               }
             }
+            console.log('[App] Starting playback from chunk index', {
+              startIndex,
+              firstChunkIndex,
+              currentPlayingChunkId,
+              totalChunks: otherPartyChunks.length,
+            });
 
             // Play chunks in order starting from startIndex
             for (let i = startIndex; i < otherPartyChunks.length; i++) {
@@ -1672,6 +1736,17 @@ export default function App() {
         console.log(
           '[connectivity effect] Going offline - stopping recording and switching to connected view',
         );
+        // Record the timestamp when we go offline (to find first chunk of next online session)
+        lastOfflineTimestampRef.current = new Date().toISOString();
+        console.log('[connectivity effect] Recorded offline timestamp', {
+          timestamp: lastOfflineTimestampRef.current,
+        });
+        // Track state change: going to playback mode
+        myStateHistoryRef.current.push({
+          timestamp: lastOfflineTimestampRef.current,
+          state: 'playback',
+          isOnline: false,
+        });
         stopRecording();
         // Clear upload progress callback
         setUploadProgressCallback(null);
@@ -1679,8 +1754,38 @@ export default function App() {
         setUploadedChunksCount(0);
         setView('connected');
       } else {
-        // when we regain connectivity, show live calling UI
+        // when we regain connectivity, show live calling UI and RESTART RECORDING
+        console.log(
+          '[connectivity effect] Coming back online - restarting recording',
+          {
+            callId: currentCall.id,
+            lastOfflineTimestamp: lastOfflineTimestampRef.current,
+          },
+        );
+        // Track state change: going to recording mode
+        myStateHistoryRef.current.push({
+          timestamp: new Date().toISOString(),
+          state: 'recording',
+          isOnline: true,
+        });
         setView('calling');
+        // Restart recording when coming back online
+        if (currentCall && currentCall.id && myPhoneNumber) {
+          // Reset the first chunk of current session - we'll track it when first chunk arrives
+          firstChunkOfCurrentSessionRef.current = null;
+          startRecording(currentCall.id, myPhoneNumber)
+            .then(() => {
+              console.log(
+                '[connectivity effect] ✅ Recording restarted after coming back online',
+              );
+            })
+            .catch((err) => {
+              console.error(
+                '[connectivity effect] ❌ Failed to restart recording',
+                err,
+              );
+            });
+        }
       }
     }
   }, [isOnline, currentCall]);
@@ -2104,6 +2209,17 @@ export default function App() {
           console.log(
             '[connectivity effect] Going offline - stopping recording and switching to connected view',
           );
+          // Record the timestamp when we go offline (to find first chunk of next online session)
+          lastOfflineTimestampRef.current = new Date().toISOString();
+          console.log('[connectivity effect] Recorded offline timestamp', {
+            timestamp: lastOfflineTimestampRef.current,
+          });
+          // Track state change: going to playback mode
+          myStateHistoryRef.current.push({
+            timestamp: lastOfflineTimestampRef.current,
+            state: 'playback',
+            isOnline: false,
+          });
           stopRecording();
           // Clear upload progress callback
           setUploadProgressCallback(null);
@@ -2262,6 +2378,13 @@ export default function App() {
 
     // Reset chunk counter
     setUploadedChunksCount(0);
+
+    // Track state: starting recording
+    myStateHistoryRef.current.push({
+      timestamp: new Date().toISOString(),
+      state: 'recording',
+      isOnline: isOnline,
+    });
 
     try {
       await startRecording(callId, myPhoneNumber);
@@ -2537,6 +2660,13 @@ export default function App() {
       // Reset chunk counter
       setUploadedChunksCount(0);
 
+      // Track state: starting recording (accepting call)
+      myStateHistoryRef.current.push({
+        timestamp: new Date().toISOString(),
+        state: 'recording',
+        isOnline: isOnline,
+      });
+
       try {
         await startRecording(callRow.id, myPhoneNumber);
         console.log('[handleAccept] ✅ Recording started successfully');
@@ -2722,6 +2852,10 @@ export default function App() {
           currentChunkProgress={currentChunkProgress}
           isPlaying={isPlaying}
           playbackController={playbackController}
+          myPhoneNumber={myPhoneNumber}
+          callStartTime={currentCall.created_at}
+          myStateHistory={myStateHistoryRef.current}
+          otherStateHistory={otherStateHistoryRef.current}
         />
       )}
       {view === 'end' && <EndCallView onDone={handleEndDone} />}
