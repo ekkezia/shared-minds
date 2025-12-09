@@ -131,7 +131,7 @@ function Visualizer({ mode = 'recording', audioStream = null }) {
   );
 }
 
-export default function CallingView({ call, isOnline, onEnd, audioStream }) {
+export default function CallingView({ call, isOnline, onEnd, audioStream, uploadedChunksCount = 0 }) {
   const [elapsedTime, setElapsedTime] = useState(0);
 
   useEffect(() => {
@@ -173,17 +173,32 @@ export default function CallingView({ call, isOnline, onEnd, audioStream }) {
           {isOnline ? 'Recording your voice...' : 'Playing their voice...'}
         </div>
         {isOnline && (
-          <div
-            style={{
-              marginTop: '8px',
-              fontSize: '18px',
-              fontWeight: '600',
-              color: '#34c759',
-              letterSpacing: '1px',
-            }}
-          >
-            {formatTime(elapsedTime)}
-          </div>
+          <>
+            <div
+              style={{
+                marginTop: '8px',
+                fontSize: '18px',
+                fontWeight: '600',
+                color: '#34c759',
+                letterSpacing: '1px',
+              }}
+            >
+              {formatTime(elapsedTime)}
+            </div>
+            <div
+              style={{
+                marginTop: '4px',
+                fontSize: '14px',
+                fontWeight: '500',
+                color: uploadedChunksCount > 0 ? '#34c759' : '#ffcc00',
+                letterSpacing: '0.5px',
+              }}
+            >
+              {uploadedChunksCount > 0
+                ? `✅ ${uploadedChunksCount} chunk${uploadedChunksCount !== 1 ? 's' : ''} uploaded`
+                : '⏳ Waiting for first upload...'}
+            </div>
+          </>
         )}
       </div>
 
@@ -204,12 +219,27 @@ export default function CallingView({ call, isOnline, onEnd, audioStream }) {
             cursor: isOnline ? 'pointer' : 'not-allowed',
           }}
         >
-          <svg width='22' height='22' viewBox='0 0 24 24' aria-hidden='true'>
-            <circle cx='12' cy='12' r='12' fill='#FF3B30' />
-            <path
-              d='M17.2 12.7c-.6-.2-1.2-.3-1.8-.3-.5 0-1 .2-1.4.4-.2.1-.5.1-.7 0l-2-1.1c-1.6-.9-3.4-2.4-4.7-4.1 1.3-1.7 3.1-3.2 4.7-4.1l2-1.1c.2-.1.5-.1.7 0 .4.2.9.4 1.4.4.6 0 1.2-.1 1.8-.3.3-.1.6 0 .8.2l2.2 2.2c.2.2.3.5.2.8-1 3.1-3.1 5.6-5.6 7.1-.2.1-.5.1-.7 0z'
-              fill='white'
-            />
+          <svg
+            width='24px'
+            height='24px'
+            viewBox='0 0 24 24'
+            id='end_call'
+            data-name='end call'
+            xmlns='http://www.w3.org/2000/svg'
+            aria-hidden='true'
+          >
+            <rect id='placer' width='24' height='24' fill='none' />
+            <g id='Group' transform='translate(2 8)'>
+              <path
+                id='Shape'
+                d='M7.02,15.976,5.746,13.381a.7.7,0,0,0-.579-.407l-1.032-.056a.662.662,0,0,1-.579-.437,9.327,9.327,0,0,1,0-6.5.662.662,0,0,1,.579-.437l1.032-.109a.7.7,0,0,0,.589-.394L7.03,2.446l.331-.662a.708.708,0,0,0,.07-.308.692.692,0,0,0-.179-.467A3,3,0,0,0,4.693.017l-.235.03L4.336.063A1.556,1.556,0,0,0,4.17.089l-.162.04C1.857.679.165,4.207,0,8.585V9.83c.165,4.372,1.857,7.9,4,8.483l.162.04a1.556,1.556,0,0,0,.165.026l.122.017.235.03a3,3,0,0,0,2.558-.993.692.692,0,0,0,.179-.467.708.708,0,0,0-.07-.308Z'
+                transform='translate(18.936 0.506) rotate(90)'
+                fill='white'
+                stroke='white'
+                strokeMiterlimit='10'
+                strokeWidth='1.5'
+              />
+            </g>
           </svg>
         </button>
       </div>

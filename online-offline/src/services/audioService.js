@@ -383,35 +383,32 @@ export async function startRecording(callId, myPhoneNumber) {
           navigator.userAgent,
         );
 
-      if (recorderId !== currentRecorderId) {
-        // On mobile, be more lenient - allow data if it's close (within 1 ID)
-        // This helps with timing issues on mobile devices
-        const idDiff = Math.abs(recorderId - currentRecorderId);
-        if (isMobile && idDiff <= 1 && evt.data && evt.data.size > 0) {
-          console.log(
-            '[startRecording] 📱 Mobile: Allowing chunk from nearby recorder ID',
-            {
-              callId,
-              eventRecorderId: recorderId,
-              currentRecorderId,
-              idDiff,
-              dataSize: evt.data.size,
-            },
-          );
-          // Continue processing - don't return
-        } else {
-          console.warn(
-            '[startRecording] ⚠️ Ignoring data from stale MediaRecorder',
-            {
-              callId,
-              eventRecorderId: recorderId,
-              currentRecorderId,
-              dataSize: evt.data?.size || 0,
-              isMobile,
-            },
-          );
-          return; // Ignore data from old MediaRecorder instances
-        }
+      // On mobile, completely disable recorder ID check - accept ALL chunks with data
+      // This is necessary because mobile devices have timing issues with MediaRecorder
+      if (!isMobile && recorderId !== currentRecorderId) {
+        console.warn(
+          '[startRecording] ⚠️ Ignoring data from stale MediaRecorder',
+          {
+            callId,
+            eventRecorderId: recorderId,
+            currentRecorderId,
+            dataSize: evt.data?.size || 0,
+          },
+        );
+        return; // Ignore data from old MediaRecorder instances (desktop only)
+      }
+
+      // On mobile, log but accept the chunk regardless of recorder ID
+      if (isMobile && recorderId !== currentRecorderId) {
+        console.log(
+          '[startRecording] 📱 Mobile: Accepting chunk (ID check disabled)',
+          {
+            callId,
+            eventRecorderId: recorderId,
+            currentRecorderId,
+            dataSize: evt.data?.size || 0,
+          },
+        );
       }
 
       // Debug logging for mobile
@@ -596,7 +593,74 @@ export async function startRecording(callId, myPhoneNumber) {
             error: cacheErr,
           });
         });
-        if (onUploadProgress) onUploadProgress({ callId, path, publicUrl });
+
+        // Call upload progress callback - CRITICAL for UI feedback
+        if (onUploadProgress) {
+          try {
+            onUploadProgress({ callId, path, publicUrl });
+            console.log('[startRecording] ✅ Upload progress callback called', {
+              callId,
+              chunkNumber: chunkNum,
+              isMobile,
+            });
+          } catch (callbackErr) {
+            console.error(
+              '[startRecording] ❌ Upload progress callback error',
+              {
+                callId,
+                chunkNumber: chunkNum,
+                error: callbackErr,
+              },
+            );
+          }
+        } else {
+          console.warn('[startRecording] ⚠️ No upload progress callback set', {
+            callId,
+            chunkNumber: chunkNum,
+            isMobile,
+          });
+        }
+
+        // After successfully uploading a chunk, restart the recorder for the next chunk
+        // This ensures continuous recording without relying on setInterval
+        // Use a small delay to ensure the current chunk is fully processed
+        // Only restart if we're still recording for this call
+        setTimeout(() => {
+          if (
+            currentCallId === callId &&
+            mediaRecorder?.state === 'recording' &&
+            !isStoppingForChunk
+          ) {
+            console.log(
+              '[startRecording] Triggering restart after chunk upload',
+              {
+                callId,
+                chunkNumber: chunkNum,
+                currentState: mediaRecorder.state,
+              },
+            );
+            restartRecording().catch((err) => {
+              console.error(
+                '[startRecording] Error restarting after chunk upload',
+                {
+                  callId,
+                  chunkNumber: chunkNum,
+                  error: err,
+                },
+              );
+            });
+          } else {
+            console.log(
+              '[startRecording] Skipping restart - conditions not met',
+              {
+                callId,
+                currentCallId,
+                recorderState: mediaRecorder?.state,
+                isStoppingForChunk,
+              },
+            );
+          }
+        }, 200); // Small delay to ensure upload completes
       } catch (err) {
         // CRITICAL: Log upload errors with full details for debugging
         const isMobile =
@@ -615,6 +679,21 @@ export async function startRecording(callId, myPhoneNumber) {
           isMobile,
           userAgent: navigator.userAgent,
         });
+
+        // Still try to call the callback with error info (for debugging)
+        if (onUploadProgress) {
+          try {
+            onUploadProgress({
+              callId,
+              path: null,
+              publicUrl: null,
+              error: err.message,
+              failed: true,
+            });
+          } catch (callbackErr) {
+            // Ignore callback errors
+          }
+        }
         // Don't re-throw - allow other chunks to continue uploading
       }
     };
@@ -717,12 +796,18 @@ export async function startRecording(callId, myPhoneNumber) {
 
     isStoppingForChunk = true;
 
+    const isMobile =
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+        navigator.userAgent,
+      );
+
     if (mediaRecorder && mediaRecorder.state === 'recording') {
       console.log(
         '[startRecording] Stopping MediaRecorder to create complete chunk',
         {
           callId,
           chunkIndex,
+          isMobile,
         },
       );
 
@@ -760,7 +845,12 @@ export async function startRecording(callId, myPhoneNumber) {
           }
         }
 
-        // Create new MediaRecorder with same options
+        // On mobile, try to reuse the same MediaRecorder instead of creating a new one
+        // This avoids timing issues and ID mismatches
+        // BUT: MediaRecorder can't be restarted after stop() - we MUST create a new one
+        // So we'll always create a new MediaRecorder, but we'll be more lenient with ID checks
+
+        // Create new MediaRecorder with same options (desktop or mobile fallback)
         const options = mediaRecorder.mimeType
           ? { mimeType: mediaRecorder.mimeType }
           : {};
@@ -768,10 +858,6 @@ export async function startRecording(callId, myPhoneNumber) {
 
         // Increment recorder ID to track new instance
         currentRecorderId += 1;
-        const isMobile =
-          /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-            navigator.userAgent,
-          );
         console.log('[startRecording] Creating new MediaRecorder instance', {
           callId,
           newRecorderId: currentRecorderId,
@@ -849,8 +935,9 @@ export async function startRecording(callId, myPhoneNumber) {
           });
         };
 
-        // Start the new recorder
-        mediaRecorder.start();
+        // Start the new recorder with timeslice to get chunks every CHUNK_MS
+        // This is critical for mobile - without timeslice, ondataavailable may not fire
+        mediaRecorder.start(CHUNK_MS);
         console.log(
           '[startRecording] MediaRecorder restarted (new instance) for next chunk',
           {
@@ -858,6 +945,8 @@ export async function startRecording(callId, myPhoneNumber) {
             chunkIndex,
             state: mediaRecorder.state,
             mimeType: mediaRecorder.mimeType,
+            timeslice: CHUNK_MS,
+            isMobile,
           },
         );
       } catch (err) {
@@ -897,7 +986,8 @@ export async function startRecording(callId, myPhoneNumber) {
               stopPromiseResolver = null;
             }
           };
-          mediaRecorder.start();
+          // Start with timeslice for reliable chunking
+          mediaRecorder.start(CHUNK_MS);
         } catch (recoveryErr) {
           console.error(
             '[startRecording] Failed to recover MediaRecorder',
@@ -910,20 +1000,24 @@ export async function startRecording(callId, myPhoneNumber) {
     isStoppingForChunk = false;
   };
 
-  // Start first chunk
-  mediaRecorder.start();
+  // Start first chunk with timeslice to get chunks every CHUNK_MS
+  // This is critical for mobile - without timeslice, ondataavailable may not fire
+  mediaRecorder.start(CHUNK_MS);
   console.log('[startRecording] MediaRecorder.start() called (first chunk)', {
     callId,
     mimeType: mediaRecorder.mimeType,
     state: mediaRecorder.state,
+    timeslice: CHUNK_MS,
+    isMobile:
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+        navigator.userAgent,
+      ),
   });
 
-  // Set up interval to stop and restart every CHUNK_MS
-  chunkIntervalId = setInterval(() => {
-    restartRecording().catch((err) => {
-      console.error('[startRecording] Error in restart interval', err);
-    });
-  }, CHUNK_MS);
+  // NOTE: We no longer use setInterval to restart the recorder
+  // Instead, restartRecording() is called automatically after each chunk is uploaded
+  // This is triggered from the ondataavailable handler after successful upload
+  // This avoids race conditions between timeslice events and interval timers
 
   return mediaRecorder;
 }

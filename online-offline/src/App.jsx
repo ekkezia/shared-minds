@@ -38,6 +38,7 @@ import {
   refreshUsersList,
   fetchActiveCallId,
   fetchAudioChunksFromOppositeParty,
+  setUploadProgressCallback,
 } from './services/audioService.js';
 import useOnlineStatus from './hooks/useOnlineStatus.js';
 
@@ -71,6 +72,7 @@ export default function App() {
   const [usersInCall, setUsersInCall] = useState(new Set()); // Track phone numbers of users in active calls
   const [userCallPartners, setUserCallPartners] = useState(new Map()); // Map of phone number -> call partner info
   const [currentCall, setCurrentCall] = useState(null);
+  const [uploadedChunksCount, setUploadedChunksCount] = useState(0); // Track number of chunks uploaded
   const [incomingCallPayload, setIncomingCallPayload] = useState(null);
   const audioPlayerRef = useRef(null);
   const playedChunkIdsRef = useRef(new Set());
@@ -399,6 +401,12 @@ export default function App() {
                   '[incoming call handler] Stopping recording - entering connected view',
                 );
                 stopRecording();
+                // Clear upload progress callback
+                setUploadProgressCallback(null);
+                // Reset chunk counter
+                setUploadedChunksCount(0);
+                // Reset chunk counter
+                setUploadedChunksCount(0);
               }
 
               try {
@@ -481,6 +489,12 @@ export default function App() {
             if (status === 'ended' || status === 'rejected') {
               try {
                 stopRecording();
+                // Clear upload progress callback
+                setUploadProgressCallback(null);
+                // Reset chunk counter
+                setUploadedChunksCount(0);
+                // Reset chunk counter
+                setUploadedChunksCount(0);
               } catch (e) {}
               try {
                 unsubscribeAudio().catch(() => {});
@@ -1197,6 +1211,10 @@ export default function App() {
           '[connectivity effect] Going offline - stopping recording and switching to connected view',
         );
         stopRecording();
+        // Clear upload progress callback
+        setUploadProgressCallback(null);
+        // Reset chunk counter
+        setUploadedChunksCount(0);
         setView('connected');
       } else {
         // when we regain connectivity, show live calling UI
@@ -1234,6 +1252,12 @@ export default function App() {
               if (s === 'ended' || s === 'rejected') {
                 try {
                   stopRecording();
+                  // Clear upload progress callback
+                  setUploadProgressCallback(null);
+                  // Reset chunk counter
+                  setUploadedChunksCount(0);
+                  // Reset chunk counter
+                  setUploadedChunksCount(0);
                 } catch (e) {}
                 try {
                   await unsubscribeAudio();
@@ -1456,6 +1480,10 @@ export default function App() {
             '[connectivity effect] Going offline - stopping recording and switching to connected view',
           );
           stopRecording();
+          // Clear upload progress callback
+          setUploadProgressCallback(null);
+          // Reset chunk counter
+          setUploadedChunksCount(0);
           setView('connected');
         }
       }
@@ -1564,6 +1592,52 @@ export default function App() {
       myPhoneNumber,
       view: 'calling',
     });
+
+    // Set up upload progress callback BEFORE starting recording
+    // This ensures the callback is ready when the first chunk is uploaded
+    setUploadProgressCallback(
+      ({ callId: uploadedCallId, path, publicUrl, error, failed }) => {
+        console.log('[handleStartCall] Upload progress callback received', {
+          uploadedCallId,
+          expectedCallId: callId,
+          path,
+          publicUrl,
+          error,
+          failed,
+          currentCount: uploadedChunksCount,
+        });
+
+        if (uploadedCallId === callId) {
+          if (failed) {
+            console.error('[handleStartCall] ❌ Chunk upload failed', {
+              callId: uploadedCallId,
+              error,
+            });
+            // Don't increment counter on failure
+          } else {
+            setUploadedChunksCount((prev) => {
+              const newCount = prev + 1;
+              console.log('[handleStartCall] ✅ Chunk uploaded', {
+                callId: uploadedCallId,
+                path,
+                publicUrl,
+                totalChunks: newCount,
+              });
+              return newCount;
+            });
+          }
+        } else {
+          console.warn('[handleStartCall] ⚠️ Callback for different call ID', {
+            uploadedCallId,
+            expectedCallId: callId,
+          });
+        }
+      },
+    );
+
+    // Reset chunk counter
+    setUploadedChunksCount(0);
+
     try {
       await startRecording(callId, myPhoneNumber);
       console.log('[handleStartCall] ✅ Recording started successfully');
@@ -1820,6 +1894,24 @@ export default function App() {
         isOnline,
         view: 'calling',
       });
+      // Set up upload progress callback
+      setUploadProgressCallback(
+        ({ callId: uploadedCallId, path, publicUrl }) => {
+          if (uploadedCallId === callRow.id) {
+            setUploadedChunksCount((prev) => prev + 1);
+            console.log('[handleAccept] ✅ Chunk uploaded', {
+              callId: uploadedCallId,
+              path,
+              publicUrl,
+              totalChunks: uploadedChunksCount + 1,
+            });
+          }
+        },
+      );
+
+      // Reset chunk counter
+      setUploadedChunksCount(0);
+
       try {
         await startRecording(callRow.id, myPhoneNumber);
         console.log('[handleAccept] ✅ Recording started successfully');
@@ -1926,6 +2018,10 @@ export default function App() {
     }
     try {
       stopRecording();
+      // Clear upload progress callback
+      setUploadProgressCallback(null);
+      // Reset chunk counter
+      setUploadedChunksCount(0);
     } catch (e) {}
     lastCreatedCallIdRef.current = null;
     setCurrentCall(null);
@@ -1987,6 +2083,7 @@ export default function App() {
           isOnline={isOnline}
           onEnd={handleEnd}
           audioStream={getCurrentAudioStream()}
+          uploadedChunksCount={uploadedChunksCount}
         />
       )}
       {view === 'connected' && currentCall && (

@@ -19,7 +19,9 @@ export default function CallConnectedView({
   const scrubberPosition = useMemo(() => {
     if (!currentPlayingChunkId || chunks.length === 0) return 0;
 
-    const currentIndex = chunks.findIndex((c) => c.id === currentPlayingChunkId);
+    const currentIndex = chunks.findIndex(
+      (c) => c.id === currentPlayingChunkId,
+    );
     if (currentIndex === -1) return 0;
 
     // Position = (chunk index * 80px) + (progress within chunk * 80px)
@@ -72,11 +74,14 @@ export default function CallConnectedView({
               const clickX = e.clientX - rect.left;
               const scrollX = timelineRef.current.scrollLeft;
               const totalX = clickX + scrollX;
-              
+
               // Calculate which chunk was clicked
               const chunkIndex = Math.floor(totalX / 80);
-              const progressInChunk = Math.max(0, Math.min(1, (totalX % 80) / 80));
-              
+              const progressInChunk = Math.max(
+                0,
+                Math.min(1, (totalX % 80) / 80),
+              );
+
               if (chunkIndex >= 0 && chunkIndex < chunks.length) {
                 console.log('[CallConnectedView] Seeking to chunk', {
                   chunkIndex,
@@ -138,7 +143,9 @@ export default function CallConnectedView({
                       boxSizing: 'border-box',
                       marginRight: '5px',
                     }}
-                    title={`Chunk ${index + 1}/${chunks.length}${isPlaying ? ' (Playing)' : ''} - ${chunk.id || 'no-id'}`}
+                    title={`Chunk ${index + 1}/${chunks.length}${
+                      isPlaying ? ' (Playing)' : ''
+                    } - ${chunk.id || 'no-id'}`}
                   >
                     {index + 1}
                   </div>
@@ -162,7 +169,7 @@ export default function CallConnectedView({
             />
 
             {/* Progress indicator for current chunk */}
-            {currentPlayingChunkId && (
+            {currentPlayingChunkId &&
               (() => {
                 const currentIndex = chunks.findIndex(
                   (c) => c.id === currentPlayingChunkId,
@@ -181,8 +188,7 @@ export default function CallConnectedView({
                     }}
                   />
                 );
-              })()
-            )}
+              })()}
           </div>
 
           {/* Info Text */}
@@ -259,16 +265,23 @@ export default function CallConnectedView({
             ) : (
               // Play icon
               <svg
+                version='1.1'
+                xmlns='http://www.w3.org/2000/svg'
+                xmlnsXlink='http://www.w3.org/1999/xlink'
+                x='0px'
+                y='0px'
                 width='24'
                 height='24'
-                viewBox='0 0 24 24'
-                fill='none'
-                stroke='white'
-                strokeWidth='2'
-                strokeLinecap='round'
-                strokeLinejoin='round'
+                viewBox='0 0 330 330'
+                style={{ enableBackground: 'new 0 0 330 330' }}
+                xmlSpace='preserve'
               >
-                <polygon points='5 3 19 12 5 21 5 3' />
+                <path
+                  d='M37.728,328.12c2.266,1.256,4.77,1.88,7.272,1.88c2.763,0,5.522-0.763,7.95-2.28l240-149.999
+	c4.386-2.741,7.05-7.548,7.05-12.72c0-5.172-2.664-9.979-7.05-12.72L52.95,2.28c-4.625-2.891-10.453-3.043-15.222-0.4
+	C32.959,4.524,30,9.547,30,15v300C30,320.453,32.959,325.476,37.728,328.12z'
+                  fill='white'
+                />
               </svg>
             )}
           </button>
@@ -280,12 +293,27 @@ export default function CallConnectedView({
           onClick={onEnd}
           aria-label='End playback'
         >
-          <svg width='22' height='22' viewBox='0 0 24 24' aria-hidden='true'>
-            <circle cx='12' cy='12' r='12' fill='#FF3B30' />
-            <path
-              d='M17.2 12.7c-.6-.2-1.2-.3-1.8-.3-.5 0-1 .2-1.4.4-.2.1-.5.1-.7 0l-2-1.1c-1.6-.9-3.4-2.4-4.7-4.1 1.3-1.7 3.1-3.2 4.7-4.1l2-1.1c.2-.1.5-.1.7 0 .4.2.9.4 1.4.4.6 0 1.2-.1 1.8-.3.3-.1.6 0 .8.2l2.2 2.2c.2.2.3.5.2.8-1 3.1-3.1 5.6-5.6 7.1-.2.1-.5.1-.7 0z'
-              fill='white'
-            />
+          <svg
+            width='24px'
+            height='24px'
+            viewBox='0 0 24 24'
+            id='end_call'
+            data-name='end call'
+            xmlns='http://www.w3.org/2000/svg'
+            aria-hidden='true'
+          >
+            <rect id='placer' width='24' height='24' fill='none' />
+            <g id='Group' transform='translate(2 8)'>
+              <path
+                id='Shape'
+                d='M7.02,15.976,5.746,13.381a.7.7,0,0,0-.579-.407l-1.032-.056a.662.662,0,0,1-.579-.437,9.327,9.327,0,0,1,0-6.5.662.662,0,0,1,.579-.437l1.032-.109a.7.7,0,0,0,.589-.394L7.03,2.446l.331-.662a.708.708,0,0,0,.07-.308.692.692,0,0,0-.179-.467A3,3,0,0,0,4.693.017l-.235.03L4.336.063A1.556,1.556,0,0,0,4.17.089l-.162.04C1.857.679.165,4.207,0,8.585V9.83c.165,4.372,1.857,7.9,4,8.483l.162.04a1.556,1.556,0,0,0,.165.026l.122.017.235.03a3,3,0,0,0,2.558-.993.692.692,0,0,0,.179-.467.708.708,0,0,0-.07-.308Z'
+                transform='translate(18.936 0.506) rotate(90)'
+                fill='white'
+                stroke='white'
+                strokeMiterlimit='10'
+                strokeWidth='1.5'
+              />
+            </g>
           </svg>
         </button>
       </div>
