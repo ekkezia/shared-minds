@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover"
+      content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover"
     />
     <!-- Prevent mobile browsers from reloading on connectivity changes -->
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
@@ -12,6 +12,48 @@
     <meta http-equiv="Expires" content="0" />
     <title>Subway Phone</title>
     <script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.min.js"></script>
+    <style>
+      /* Prevent double-tap zoom */
+      * {
+        touch-action: manipulation;
+      }
+      /* Prevent pull-to-refresh on mobile */
+      html, body {
+        overscroll-behavior-y: none;
+        overscroll-behavior-x: none;
+      }
+    </style>
+    <script>
+      // Prevent double-tap zoom
+      let lastTouchEnd = 0;
+      document.addEventListener('touchend', function (event) {
+        const now = Date.now();
+        if (now - lastTouchEnd <= 300) {
+          event.preventDefault();
+        }
+        lastTouchEnd = now;
+      }, false);
+
+      // Prevent pull-to-refresh
+      let touchStartY = 0;
+      document.addEventListener('touchstart', function (event) {
+        touchStartY = event.touches[0].clientY;
+      }, { passive: true });
+
+      document.addEventListener('touchmove', function (event) {
+        const touchY = event.touches[0].clientY;
+        const scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
+        // If user is at the top and trying to scroll down (pull-to-refresh), prevent it
+        if (scrollTop === 0 && touchY > touchStartY) {
+          event.preventDefault();
+        }
+      }, { passive: false });
+
+      // Prevent context menu (long press) that can sometimes trigger zoom
+      document.addEventListener('contextmenu', function (event) {
+        event.preventDefault();
+      }, false);
+    </script>
   </head>
   <body>
     <div id="root"></div>

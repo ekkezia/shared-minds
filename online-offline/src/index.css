@@ -15,6 +15,21 @@ body {
   min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Prevent zooming and pull-to-refresh */
+  touch-action: manipulation;
+  overscroll-behavior-y: none;
+  overscroll-behavior-x: none;
+  -webkit-overflow-scrolling: touch;
+  /* Prevent text selection that can trigger zoom on some devices */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Allow text selection and interaction on input fields and buttons */
+input, textarea, button, select, .call-action-btn, .online-user-item {
+  -webkit-user-select: text;
+  user-select: text;
+  touch-action: auto;
 }
 
 /* phone bezel */

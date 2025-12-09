@@ -224,10 +224,10 @@ export default function DualTimeline({
           position: 'relative',
           width: '100%',
           overflowX: 'auto',
-          overflowY: 'hidden',
+          overflowY: 'visible', // Changed to visible to show timestamps
           backgroundColor: 'rgba(0, 0, 0, 0.3)',
           borderRadius: '4px',
-          padding: '12px 0',
+          padding: '30px 0 12px 0', // Added top padding for timestamps
           minHeight: '120px',
         }}
       >
@@ -236,7 +236,7 @@ export default function DualTimeline({
           style={{
             position: 'relative',
             width: `${Math.max(timelineWidth, 600)}px`,
-            minHeight: '100px',
+            minHeight: '140px', // Increased to accommodate timestamps and timeline lines
           }}
         >
           {/* Time Markers */}
@@ -275,7 +275,7 @@ export default function DualTimeline({
           <div
             style={{
               position: 'absolute',
-              top: '20px',
+              top: '50px', // Adjusted for timestamp padding
               left: 0,
               right: 0,
               height: '30px',
@@ -360,7 +360,7 @@ export default function DualTimeline({
           <div
             style={{
               position: 'absolute',
-              top: '70px',
+              top: '100px', // Adjusted for timestamp padding
               left: 0,
               right: 0,
               height: '30px',
