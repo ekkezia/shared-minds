@@ -1770,21 +1770,25 @@ export default function App() {
         });
         setView('calling');
         // Restart recording when coming back online
+        // Use a small delay to ensure stopRecording has fully completed
         if (currentCall && currentCall.id && myPhoneNumber) {
           // Reset the first chunk of current session - we'll track it when first chunk arrives
           firstChunkOfCurrentSessionRef.current = null;
-          startRecording(currentCall.id, myPhoneNumber)
-            .then(() => {
-              console.log(
-                '[connectivity effect] ✅ Recording restarted after coming back online',
-              );
-            })
-            .catch((err) => {
-              console.error(
-                '[connectivity effect] ❌ Failed to restart recording',
-                err,
-              );
-            });
+          // Wait a bit to ensure any previous stopRecording has completed
+          setTimeout(() => {
+            startRecording(currentCall.id, myPhoneNumber)
+              .then(() => {
+                console.log(
+                  '[connectivity effect] ✅ Recording restarted after coming back online',
+                );
+              })
+              .catch((err) => {
+                console.error(
+                  '[connectivity effect] ❌ Failed to restart recording',
+                  err,
+                );
+              });
+          }, 300); // Small delay to ensure cleanup completes
         }
       }
     }

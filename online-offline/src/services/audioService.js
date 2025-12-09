@@ -243,9 +243,15 @@ let onUploadProgress = null;
 let chunkIntervalId = null; // Interval ID for restarting MediaRecorder
 let isStoppingForChunk = false; // Flag to prevent multiple stops
 let currentRecorderId = 0; // Track MediaRecorder instances to filter stale events
+let isRestarting = false; // Flag to prevent multiple simultaneous restarts
+let restartTimeoutId = null; // Timeout ID for scheduled restart
+let isProcessingChunk = false; // Flag to prevent processing multiple chunks simultaneously
+let lastChunkProcessedTime = 0; // Timestamp of last chunk processing to enforce 5s interval
+let processedChunkIds = new Set(); // Track processed chunk IDs to prevent duplicate callbacks
 // Lower threshold for mobile devices - they may produce smaller chunks initially
 const MIN_CHUNK_SIZE = 256; // Minimum 256 bytes (reduced from 1KB to support mobile)
 const MOBILE_MIN_CHUNK_SIZE = 0; // No minimum for mobile - accept ANY chunk with data
+const MIN_CHUNK_INTERVAL_MS = 4500; // Minimum 4.5 seconds between chunk processing (slightly less than 5s to account for timing)
 
 export function setUploadProgressCallback(fn) {
   onUploadProgress = fn;
@@ -302,8 +308,47 @@ export async function startRecording(callId, myPhoneNumber) {
       '[startRecording] ⚠️ No supported audio format found, using default',
     );
   }
+  // If already recording for this call, don't restart
+  if (
+    currentCallId === callId &&
+    mediaRecorder &&
+    mediaRecorder.state === 'recording'
+  ) {
+    console.log('[startRecording] Already recording for this call, skipping', {
+      callId,
+      currentState: mediaRecorder.state,
+    });
+    return;
+  }
+
+  // Stop any existing recording first
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    console.log(
+      '[startRecording] Stopping existing recording before starting new one',
+      {
+        callId,
+        currentState: mediaRecorder.state,
+      },
+    );
+    try {
+      stopRecording();
+    } catch (e) {
+      console.warn('[startRecording] Error stopping existing recording', e);
+    }
+  }
+
+  // Clear any pending restart
+  if (restartTimeoutId) {
+    clearTimeout(restartTimeoutId);
+    restartTimeoutId = null;
+  }
+  isRestarting = false;
+
   currentCallId = callId;
   chunkIndex = 0;
+  isProcessingChunk = false; // Reset processing flag
+  lastChunkProcessedTime = 0; // Reset timestamp
+  processedChunkIds.clear(); // Clear processed chunk IDs for new recording session
 
   console.log('[startRecording] Starting audio recording', {
     callId,
@@ -376,6 +421,39 @@ export async function startRecording(callId, myPhoneNumber) {
   // Define the data handler function with recorder ID tracking
   const createDataHandler = (recorderId) => {
     return async (evt) => {
+      // CRITICAL: Prevent processing multiple chunks simultaneously
+      if (isProcessingChunk) {
+        console.warn(
+          '[startRecording] ⚠️ Already processing a chunk, ignoring this event',
+          {
+            callId,
+            recorderId,
+            dataSize: evt.data?.size || 0,
+          },
+        );
+        return; // Ignore if we're already processing a chunk
+      }
+
+      // CRITICAL: Enforce minimum interval between chunk processing (5 seconds)
+      const now = Date.now();
+      const timeSinceLastChunk = now - lastChunkProcessedTime;
+      if (
+        lastChunkProcessedTime > 0 &&
+        timeSinceLastChunk < MIN_CHUNK_INTERVAL_MS
+      ) {
+        console.warn(
+          '[startRecording] ⚠️ Chunk received too soon, ignoring (rate limiting)',
+          {
+            callId,
+            recorderId,
+            timeSinceLastChunk: `${timeSinceLastChunk}ms`,
+            minInterval: `${MIN_CHUNK_INTERVAL_MS}ms`,
+            dataSize: evt.data?.size || 0,
+          },
+        );
+        return; // Ignore chunks that arrive too quickly
+      }
+
       // CRITICAL: Only process data from the current active MediaRecorder
       // This prevents processing stale events from previous MediaRecorder instances
       const isMobile =
@@ -397,6 +475,10 @@ export async function startRecording(callId, myPhoneNumber) {
         );
         return; // Ignore data from old MediaRecorder instances (desktop only)
       }
+
+      // Mark that we're processing a chunk
+      isProcessingChunk = true;
+      lastChunkProcessedTime = now;
 
       // On mobile, log but accept the chunk regardless of recorder ID
       if (isMobile && recorderId !== currentRecorderId) {
@@ -440,6 +522,7 @@ export async function startRecording(callId, myPhoneNumber) {
           chunkIndex,
           recorderId,
         });
+        isProcessingChunk = false; // Clear flag on early return
         return;
       }
 
@@ -453,6 +536,7 @@ export async function startRecording(callId, myPhoneNumber) {
             mediaRecorderState: mediaRecorder?.state,
           },
         );
+        isProcessingChunk = false; // Clear flag on early return
         return; // Skip empty chunks completely
       }
 
@@ -490,6 +574,7 @@ export async function startRecording(callId, myPhoneNumber) {
           );
           // Continue processing - don't return
         } else {
+          isProcessingChunk = false; // Clear flag on early return
           return; // Skip chunks that are too small (desktop only)
         }
       }
@@ -497,8 +582,29 @@ export async function startRecording(callId, myPhoneNumber) {
       const blob = evt.data;
       const timestamp = Date.now();
       // Organize audio by participant: call-{callId}/{phoneNumber}/{timestamp}-{chunkIndex}.webm
-      const path = `call-${callId}/${myPhoneNumber}/${timestamp}-${chunkIndex}.webm`;
-      const chunkNum = chunkIndex;
+      const chunkNum = chunkIndex; // Use current index before incrementing
+      const path = `call-${callId}/${myPhoneNumber}/${timestamp}-${chunkNum}.webm`;
+      // Create a unique chunk ID to prevent duplicate callbacks
+      const chunkUploadId = `${callId}-${chunkNum}-${timestamp}`;
+
+      // Check if we've already processed this chunk (prevent duplicate callbacks)
+      if (processedChunkIds.has(chunkUploadId)) {
+        console.warn(
+          '[startRecording] ⚠️ Duplicate chunk upload ID detected, skipping callback',
+          {
+            callId,
+            chunkNum,
+            chunkUploadId,
+          },
+        );
+        isProcessingChunk = false; // Clear flag
+        return; // Don't process duplicate chunks
+      }
+
+      // Mark this chunk as processed
+      processedChunkIds.add(chunkUploadId);
+
+      // Increment chunkIndex AFTER we've captured the current value
       chunkIndex += 1;
 
       console.log('[startRecording] 🎤 Valid audio chunk created', {
@@ -595,20 +701,36 @@ export async function startRecording(callId, myPhoneNumber) {
         });
 
         // Call upload progress callback - CRITICAL for UI feedback
+        // Only call once per chunk (prevent duplicates)
         if (onUploadProgress) {
           try {
+            console.log(
+              '[startRecording] 📞 Calling upload progress callback',
+              {
+                callId,
+                chunkNumber: chunkNum,
+                chunkUploadId,
+                isMobile,
+                timestamp: new Date().toISOString(),
+              },
+            );
             onUploadProgress({ callId, path, publicUrl });
-            console.log('[startRecording] ✅ Upload progress callback called', {
-              callId,
-              chunkNumber: chunkNum,
-              isMobile,
-            });
+            console.log(
+              '[startRecording] ✅ Upload progress callback called successfully',
+              {
+                callId,
+                chunkNumber: chunkNum,
+                chunkUploadId,
+                isMobile,
+              },
+            );
           } catch (callbackErr) {
             console.error(
               '[startRecording] ❌ Upload progress callback error',
               {
                 callId,
                 chunkNumber: chunkNum,
+                chunkUploadId,
                 error: callbackErr,
               },
             );
@@ -617,19 +739,26 @@ export async function startRecording(callId, myPhoneNumber) {
           console.warn('[startRecording] ⚠️ No upload progress callback set', {
             callId,
             chunkNumber: chunkNum,
-            isMobile,
+            chunkUploadId,
           });
         }
 
         // After successfully uploading a chunk, restart the recorder for the next chunk
         // This ensures continuous recording without relying on setInterval
         // Use a small delay to ensure the current chunk is fully processed
-        // Only restart if we're still recording for this call
-        setTimeout(() => {
+        // Only restart if we're still recording for this call and not already restarting
+        if (restartTimeoutId) {
+          clearTimeout(restartTimeoutId);
+        }
+        restartTimeoutId = setTimeout(() => {
+          restartTimeoutId = null;
+          // Clear processing flag before restarting
+          isProcessingChunk = false;
           if (
             currentCallId === callId &&
             mediaRecorder?.state === 'recording' &&
-            !isStoppingForChunk
+            !isStoppingForChunk &&
+            !isRestarting
           ) {
             console.log(
               '[startRecording] Triggering restart after chunk upload',
@@ -648,6 +777,8 @@ export async function startRecording(callId, myPhoneNumber) {
                   error: err,
                 },
               );
+              // Clear processing flag on error
+              isProcessingChunk = false;
             });
           } else {
             console.log(
@@ -657,11 +788,16 @@ export async function startRecording(callId, myPhoneNumber) {
                 currentCallId,
                 recorderState: mediaRecorder?.state,
                 isStoppingForChunk,
+                isRestarting,
               },
             );
+            // Clear processing flag if we're not restarting
+            isProcessingChunk = false;
           }
         }, 200); // Small delay to ensure upload completes
       } catch (err) {
+        // Clear processing flag on error
+        isProcessingChunk = false;
         // CRITICAL: Log upload errors with full details for debugging
         const isMobile =
           /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
@@ -789,12 +925,19 @@ export async function startRecording(callId, myPhoneNumber) {
   const savedMimeType = mediaRecorder.mimeType;
 
   const restartRecording = async () => {
-    if (isStoppingForChunk) {
-      console.log('[startRecording] Already stopping, skipping restart');
+    if (isStoppingForChunk || isRestarting) {
+      console.log(
+        '[startRecording] Already stopping/restarting, skipping restart',
+        {
+          isStoppingForChunk,
+          isRestarting,
+        },
+      );
       return;
     }
 
     isStoppingForChunk = true;
+    isRestarting = true;
 
     const isMobile =
       /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
@@ -841,6 +984,7 @@ export async function startRecording(callId, myPhoneNumber) {
           } catch (err) {
             console.error('[startRecording] Failed to get new stream', err);
             isStoppingForChunk = false;
+            isRestarting = false;
             return;
           }
         }
@@ -938,6 +1082,8 @@ export async function startRecording(callId, myPhoneNumber) {
         // Start the new recorder with timeslice to get chunks every CHUNK_MS
         // This is critical for mobile - without timeslice, ondataavailable may not fire
         mediaRecorder.start(CHUNK_MS);
+        isStoppingForChunk = false;
+        isRestarting = false;
         console.log(
           '[startRecording] MediaRecorder restarted (new instance) for next chunk',
           {
@@ -988,16 +1134,26 @@ export async function startRecording(callId, myPhoneNumber) {
           };
           // Start with timeslice for reliable chunking
           mediaRecorder.start(CHUNK_MS);
+          isStoppingForChunk = false;
+          isRestarting = false;
+          console.log('[startRecording] ✅ MediaRecorder recovered', {
+            callId,
+            state: mediaRecorder.state,
+          });
         } catch (recoveryErr) {
           console.error(
             '[startRecording] Failed to recover MediaRecorder',
             recoveryErr,
           );
+          isStoppingForChunk = false;
+          isRestarting = false;
         }
       }
     }
 
+    // Fallback: ensure flags are reset even if something went wrong
     isStoppingForChunk = false;
+    isRestarting = false;
   };
 
   // Start first chunk with timeslice to get chunks every CHUNK_MS
@@ -1023,6 +1179,13 @@ export async function startRecording(callId, myPhoneNumber) {
 }
 
 export function stopRecording() {
+  // Clear any pending restart
+  if (restartTimeoutId) {
+    clearTimeout(restartTimeoutId);
+    restartTimeoutId = null;
+  }
+  isRestarting = false;
+
   // Clear the interval that restarts MediaRecorder
   if (chunkIntervalId) {
     clearInterval(chunkIntervalId);
@@ -1064,6 +1227,9 @@ export function stopRecording() {
   mediaRecorder = null;
   currentCallId = null;
   chunkIndex = 0;
+  isProcessingChunk = false; // Reset processing flag
+  lastChunkProcessedTime = 0; // Reset timestamp
+  processedChunkIds.clear(); // Clear processed chunk IDs
 
   console.log('[stopRecording] ✅ Recording stopped and cleaned up');
 }

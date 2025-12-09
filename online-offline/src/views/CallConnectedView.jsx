@@ -18,6 +18,7 @@ export default function CallConnectedView({
   const timelineRef = useRef(null);
 
   // Auto-scroll to keep the currently playing chunk visible
+  // Only scroll when the chunk ID changes, not on every progress update
   useEffect(() => {
     if (!timelineRef.current || !currentPlayingChunkId || chunks.length === 0) {
       return;
@@ -36,8 +37,11 @@ export default function CallConnectedView({
     const scrollLeft = timeline.scrollLeft;
     const scrollRight = scrollLeft + timeline.clientWidth;
 
-    // Check if the chunk is outside the visible area
-    const needsScroll = chunkLeft < scrollLeft || chunkRight > scrollRight;
+    // Only scroll if the chunk is significantly outside the visible area
+    // Add a buffer zone (20px) to prevent constant micro-adjustments
+    const buffer = 20;
+    const needsScroll =
+      chunkLeft < scrollLeft - buffer || chunkRight > scrollRight + buffer;
 
     if (needsScroll) {
       // Calculate the ideal scroll position to center the chunk (with some padding)
@@ -51,7 +55,7 @@ export default function CallConnectedView({
         behavior: 'smooth',
       });
     }
-  }, [currentPlayingChunkId, currentChunkProgress, chunks]);
+  }, [currentPlayingChunkId, chunks]); // Removed currentChunkProgress from dependencies
   // Calculate total duration (each chunk is ~5 seconds)
   const totalDuration = chunks.length * 5;
   const chunkWidthPercent = chunks.length > 0 ? 100 / chunks.length : 0;
