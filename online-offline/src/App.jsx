@@ -1795,10 +1795,22 @@ export default function App() {
           firstChunkOfCurrentSessionRef.current = null;
           // Wait a bit to ensure any previous stopRecording has completed
           setTimeout(() => {
+            console.log(
+              '[connectivity effect] Restarting recording with preserved chunkIndex',
+              {
+                callId: currentCall.id,
+                myPhoneNumber,
+                // Note: chunkIndex is preserved in audioService.js when isRestartForSameCall is true
+              },
+            );
             startRecording(currentCall.id, myPhoneNumber)
               .then(() => {
                 console.log(
                   '[connectivity effect] ✅ Recording restarted after coming back online',
+                  {
+                    callId: currentCall.id,
+                    // chunkIndex should continue from where it left off
+                  },
                 );
               })
               .catch((err) => {

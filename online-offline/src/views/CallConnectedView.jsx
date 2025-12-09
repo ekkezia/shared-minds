@@ -143,6 +143,9 @@ export default function CallConnectedView({
               // Custom scrollbar styling
               scrollbarWidth: 'thin',
               scrollbarColor: 'rgba(255, 255, 255, 0.3) rgba(0, 0, 0, 0.1)',
+              // Ensure scrolling works on mobile
+              WebkitOverflowScrolling: 'touch',
+              touchAction: 'pan-x',
             }}
             onClick={(e) => {
               if (!playbackController || !timelineRef.current) return;
@@ -180,9 +183,11 @@ export default function CallConnectedView({
             <div
               style={{
                 position: 'relative',
-                width: `${playbackChunks.length * 80}px`, // Fixed width per chunk (80px each)
+                width: `${Math.max(playbackChunks.length * 80, 100)}px`, // Fixed width per chunk (80px each), minimum 100px
                 height: '100%',
                 minWidth: '100%',
+                // Ensure content is wider than container when there are many chunks
+                display: 'inline-block',
               }}
             >
               {playbackChunks.map((chunk, index) => {

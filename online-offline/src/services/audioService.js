@@ -311,6 +311,13 @@ export async function startRecording(callId, myPhoneNumber) {
   // Check if this is a restart for the same call (preserve chunkIndex) or a new call (reset chunkIndex)
   const isRestartForSameCall = currentCallId === callId;
 
+  console.log('[startRecording] Checking if restart for same call', {
+    callId,
+    currentCallId,
+    isRestartForSameCall,
+    currentChunkIndex: chunkIndex,
+  });
+
   // If already recording for this call, don't restart
   if (
     isRestartForSameCall &&
@@ -526,8 +533,9 @@ export async function startRecording(callId, myPhoneNumber) {
       }
 
       // Mark that we're processing a chunk
+      // NOTE: Don't update lastChunkProcessedTime here - update it AFTER successful upload
+      // This ensures rate limiting is based on actual upload completion, not event arrival
       isProcessingChunk = true;
-      lastChunkProcessedTime = now;
 
       // On mobile, log but accept the chunk regardless of recorder ID
       if (isMobile && recorderId !== currentRecorderId) {
@@ -630,11 +638,13 @@ export async function startRecording(callId, myPhoneNumber) {
 
       const blob = evt.data;
       const timestamp = Date.now();
-      // Organize audio by participant: call-{callId}/{phoneNumber}/{timestamp}-{chunkIndex}.webm
+      // Organize audio by participant: call-{callId}/{phoneNumber}/{paddedChunkNum}.webm
+      // Use padded format: 001, 002, 003, etc. (continues from where we left off)
       const chunkNum = chunkIndex; // Use current index before incrementing
-      const path = `call-${callId}/${myPhoneNumber}/${timestamp}-${chunkNum}.webm`;
+      const paddedChunkNum = String(chunkNum).padStart(3, '0'); // 001, 002, 003, etc.
+      const path = `call-${callId}/${myPhoneNumber}/${paddedChunkNum}.webm`;
       // Create a unique chunk ID to prevent duplicate callbacks
-      const chunkUploadId = `${callId}-${chunkNum}-${timestamp}`;
+      const chunkUploadId = `${callId}-${paddedChunkNum}-${timestamp}`;
 
       // Check if we've already processed this chunk (prevent duplicate callbacks)
       if (processedChunkIds.has(chunkUploadId)) {
@@ -653,12 +663,12 @@ export async function startRecording(callId, myPhoneNumber) {
       // Mark this chunk as processed
       processedChunkIds.add(chunkUploadId);
 
-      // Increment chunkIndex AFTER we've captured the current value
-      chunkIndex += 1;
-
+      // DON'T increment chunkIndex yet - only increment AFTER successful upload
+      // This prevents gaps in chunk numbering if upload fails
       console.log('[startRecording] 🎤 Valid audio chunk created', {
         callId,
         chunkNumber: chunkNum,
+        paddedChunkNum,
         recorderId,
         chunkSize: `${(blob.size / 1024).toFixed(2)} KB`,
         chunkSizeBytes: blob.size,
@@ -739,6 +749,22 @@ export async function startRecording(callId, myPhoneNumber) {
             insertResult,
           },
         );
+
+        // CRITICAL: Only increment chunkIndex AFTER successful upload
+        // This ensures no gaps in chunk numbering
+        chunkIndex += 1;
+        console.log(
+          '[startRecording] Incremented chunkIndex after successful upload',
+          {
+            callId,
+            newChunkIndex: chunkIndex,
+            uploadedChunkNumber: chunkNum,
+          },
+        );
+
+        // Update lastChunkProcessedTime AFTER successful upload
+        // This ensures rate limiting is based on actual upload completion, not event arrival
+        lastChunkProcessedTime = Date.now();
 
         // attempt caching
         cacheAudioUrl(publicUrl).catch((cacheErr) => {
@@ -846,6 +872,7 @@ export async function startRecording(callId, myPhoneNumber) {
         }, 200); // Small delay to ensure upload completes
       } catch (err) {
         // Clear processing flag on error
+        // DON'T increment chunkIndex on error - this prevents gaps
         isProcessingChunk = false;
         // CRITICAL: Log upload errors with full details for debugging
         const isMobile =
