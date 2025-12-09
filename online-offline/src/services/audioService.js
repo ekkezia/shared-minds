@@ -309,13 +309,17 @@ export async function startRecording(callId, myPhoneNumber) {
     );
   }
   // Check if this is a restart for the same call (preserve chunkIndex) or a new call (reset chunkIndex)
-  const isRestartForSameCall = currentCallId === callId;
+  // IMPORTANT: Check BEFORE any cleanup to ensure we detect restart correctly
+  const isRestartForSameCall =
+    currentCallId === callId && currentCallId !== null;
 
   console.log('[startRecording] Checking if restart for same call', {
     callId,
     currentCallId,
     isRestartForSameCall,
     currentChunkIndex: chunkIndex,
+    mediaRecorderExists: !!mediaRecorder,
+    mediaRecorderState: mediaRecorder?.state,
   });
 
   // If already recording for this call, don't restart
@@ -375,6 +379,41 @@ export async function startRecording(callId, myPhoneNumber) {
         chunkIndex = 0;
       }
     }
+  } else {
+    // MediaRecorder is null (e.g., after stopRecording(false) when going offline)
+    // If we're restarting for the same call, preserve chunkIndex and currentCallId
+    // Otherwise, this is a new call and we should reset
+    if (!isRestartForSameCall) {
+      console.log(
+        '[startRecording] MediaRecorder is null and this is a new call - resetting',
+        {
+          callId,
+          currentCallId,
+          currentChunkIndex: chunkIndex,
+        },
+      );
+      currentCallId = null;
+      chunkIndex = 0;
+    } else {
+      console.log(
+        '[startRecording] MediaRecorder is null but restarting for same call - preserving state',
+        {
+          callId,
+          currentCallId,
+          preservedChunkIndex: chunkIndex,
+        },
+      );
+      // Ensure currentCallId is set (should already be set, but be defensive)
+      if (!currentCallId) {
+        console.warn(
+          '[startRecording] ⚠️ currentCallId was null but isRestartForSameCall is true - restoring',
+          {
+            callId,
+          },
+        );
+        currentCallId = callId;
+      }
+    }
   }
 
   // Clear any pending restart
@@ -384,9 +423,11 @@ export async function startRecording(callId, myPhoneNumber) {
   }
   isRestarting = false;
 
+  // Set currentCallId (should already be set if restarting, but ensure it's set)
   currentCallId = callId;
 
   // Only reset chunkIndex if this is a NEW call, not a restart for the same call
+  // IMPORTANT: chunkIndex should already be preserved from the cleanup section above
   if (!isRestartForSameCall) {
     chunkIndex = 0;
     console.log('[startRecording] New call - resetting chunkIndex to 0', {
@@ -398,6 +439,7 @@ export async function startRecording(callId, myPhoneNumber) {
       {
         callId,
         preservedChunkIndex: chunkIndex,
+        willContinueFrom: chunkIndex,
       },
     );
   }
