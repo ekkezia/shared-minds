@@ -2,8 +2,25 @@
 import { useEffect, useState, useRef } from 'preact/hooks';
 import { normalizePhoneNumber } from '../services/audioService.js';
 
-function Visualizer({ mode = 'recording', audioStream = null }) {
-  const [heights, setHeights] = useState(Array(12).fill(28));
+// Recording duration constant (must match audioService.js)
+const RECORDING_DURATION_SECONDS = 20;
+const BAR_COUNT = 20; // More bars for wider visualizer
+
+// Format duration as MM:SS
+function formatDuration(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+function ProgressVisualizer({
+  audioStream = null,
+  progressPercent = 0,
+  isUploaded = false,
+  isUploading = false,
+  uploadFailed = false,
+}) {
+  const [heights, setHeights] = useState(Array(BAR_COUNT).fill(28));
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
   const animationFrameRef = useRef(null);
@@ -12,21 +29,19 @@ function Visualizer({ mode = 'recording', audioStream = null }) {
   useEffect(() => {
     let mounted = true;
 
-    // If we have an audio stream and we're in recording mode, use Web Audio API
-    if (mode === 'recording' && audioStream) {
+    // If we have an audio stream, use Web Audio API for real visualization
+    if (audioStream) {
       try {
-        // Create AudioContext and AnalyserNode
         // @ts-ignore - webkitAudioContext exists in some browsers
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         const audioContext = new AudioContext();
         const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 256; // Higher resolution for smoother visualization
-        analyser.smoothingTimeConstant = 0.8; // Smooth the visualization
+        analyser.fftSize = 256;
+        analyser.smoothingTimeConstant = 0.8;
 
         const bufferLength = analyser.frequencyBinCount;
         const dataArray = new Uint8Array(bufferLength);
 
-        // Connect the audio stream to the analyser
         const source = audioContext.createMediaStreamSource(audioStream);
         source.connect(analyser);
 
@@ -34,31 +49,25 @@ function Visualizer({ mode = 'recording', audioStream = null }) {
         analyserRef.current = analyser;
         dataArrayRef.current = dataArray;
 
-        // Animation loop to update visualization
         const updateVisualization = () => {
           if (!mounted) return;
 
           analyser.getByteFrequencyData(dataArray);
 
-          // Map frequency data to 12 bars
-          // We'll use different frequency ranges for each bar
-          const barCount = 12;
-          const samplesPerBar = Math.floor(bufferLength / barCount);
+          const samplesPerBar = Math.floor(bufferLength / BAR_COUNT);
           const newHeights = [];
 
-          for (let i = 0; i < barCount; i++) {
+          for (let i = 0; i < BAR_COUNT; i++) {
             let sum = 0;
             const start = i * samplesPerBar;
             const end = start + samplesPerBar;
 
-            // Average the frequency data for this bar's range
             for (let j = start; j < end && j < bufferLength; j++) {
               sum += dataArray[j];
             }
 
             const average = sum / samplesPerBar;
-            // Normalize to 0-60px height range, with minimum of 8px
-            const height = Math.max(8, (average / 255) * 60);
+            const height = Math.max(12, (average / 255) * 70);
             newHeights.push(height);
           }
 
@@ -70,13 +79,13 @@ function Visualizer({ mode = 'recording', audioStream = null }) {
         updateVisualization();
       } catch (err) {
         console.warn(
-          '[Visualizer] Failed to setup audio analysis, using fallback',
+          '[ProgressVisualizer] Failed to setup audio analysis, using fallback',
           err,
         );
-        // Fallback to random animation if Web Audio API fails
+        // Fallback to random animation
         const interval = setInterval(() => {
           if (!mounted) return;
-          setHeights((h) => h.map(() => 10 + Math.round(Math.random() * 50)));
+          setHeights((h) => h.map(() => 12 + Math.round(Math.random() * 58)));
         }, 80);
         return () => {
           mounted = false;
@@ -84,20 +93,11 @@ function Visualizer({ mode = 'recording', audioStream = null }) {
         };
       }
     } else {
-      // Fallback for playback mode or when no stream is available
-      const interval = setInterval(
-        () => {
-          if (!mounted) return;
-          setHeights((h) =>
-            h.map(() =>
-              mode === 'recording'
-                ? 10 + Math.round(Math.random() * 50)
-                : 20 + Math.round(Math.random() * 20),
-            ),
-          );
-        },
-        mode === 'recording' ? 80 : 240,
-      );
+      // Fallback random animation when no stream
+      const interval = setInterval(() => {
+        if (!mounted) return;
+        setHeights((h) => h.map(() => 12 + Math.round(Math.random() * 58)));
+      }, 80);
       return () => {
         mounted = false;
         clearInterval(interval);
@@ -113,21 +113,64 @@ function Visualizer({ mode = 'recording', audioStream = null }) {
         audioContextRef.current.close().catch(() => {});
       }
     };
-  }, [mode, audioStream]);
+  }, [audioStream]);
+
+  // Calculate which bars should be filled based on progress
+  const filledBars = Math.floor((progressPercent / 100) * BAR_COUNT);
 
   return (
     <div
-      class={`audio-visualizer ${
-        mode === 'recording' ? 'recording-mode' : 'playback-mode'
-      }`}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '4px',
+        width: '95%',
+        maxWidth: '360px',
+        height: '80px',
+        margin: '20px auto',
+      }}
     >
-      {heights.map((height, idx) => (
-        <div
-          class={`bar ${mode === 'recording' ? 'recording' : 'playback'}`}
-          key={idx}
-          style={{ height: `${height}px` }}
-        />
-      ))}
+      {heights.map((height, idx) => {
+        const isFilled = idx < filledBars;
+        const isCurrentBar = idx === filledBars && progressPercent < 100;
+
+        // Determine bar color/style
+        let backgroundColor;
+        let borderColor = 'transparent';
+        let borderWidth = '0px';
+
+        if (isUploaded) {
+          // After upload: white stroke outline, transparent fill
+          backgroundColor = 'rgba(255, 255, 255, 0.15)';
+          borderColor = 'white';
+          borderWidth = '1px';
+        } else if (uploadFailed) {
+          // Upload failed: red bars
+          backgroundColor = isFilled ? '#ff3b30' : 'rgba(255, 59, 48, 0.2)';
+        } else if (isUploading) {
+          // Uploading: yellow/amber bars
+          backgroundColor = isFilled ? '#ffcc00' : 'rgba(255, 204, 0, 0.2)';
+        } else {
+          // Recording: red progress
+          backgroundColor = isFilled ? '#ff3b30' : 'rgba(255, 255, 255, 0.15)';
+        }
+
+        return (
+          <div
+            key={idx}
+            style={{
+              width: '12px',
+              height: `${height}px`,
+              backgroundColor,
+              borderRadius: '3px',
+              transition: 'height 0.08s ease-out, background-color 0.2s',
+              border: `${borderWidth} solid ${borderColor}`,
+              boxSizing: 'border-box',
+            }}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -138,51 +181,54 @@ export default function CallingView({
   onEnd,
   audioStream,
   uploadedChunksCount = 0,
+  uploadStatus = null, // { success: boolean, uploading?: boolean, error?: string }
   myPhoneNumber = '',
   myUsername = '',
+  callDuration = 0, // Call duration in seconds (from App.jsx)
 }) {
-  const [elapsedTime, setElapsedTime] = useState(0);
+  const [recordingTime, setRecordingTime] = useState(0);
 
+  // Track recording time (countdown from 20 seconds)
   useEffect(() => {
-    // Calculate elapsed time from call start
-    const startTime = call.created_at
-      ? new Date(call.created_at).getTime()
-      : Date.now();
+    if (!isOnline) {
+      setRecordingTime(0);
+      return;
+    }
+
+    const startTime = Date.now();
+    setRecordingTime(0);
 
     const updateTimer = () => {
-      const now = Date.now();
-      const elapsed = Math.floor((now - startTime) / 1000); // elapsed seconds
-      setElapsedTime(elapsed);
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      setRecordingTime(Math.min(elapsed, RECORDING_DURATION_SECONDS));
     };
 
-    // Update immediately
     updateTimer();
-
-    // Update every second
-    const interval = setInterval(updateTimer, 1000);
+    const interval = setInterval(updateTimer, 100);
 
     return () => clearInterval(interval);
-  }, [call.created_at]);
+  }, [isOnline]);
 
-  // Format time as MM:SS
-  const formatTime = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-  };
+  // Calculate progress
+  const progressPercent = (recordingTime / RECORDING_DURATION_SECONDS) * 100;
+  const isRecordingComplete = recordingTime >= RECORDING_DURATION_SECONDS;
+
+  // Determine upload state
+  const isUploading = uploadStatus?.uploading === true;
+  const uploadSucceeded =
+    (uploadStatus?.success === true || uploadedChunksCount > 0) && !isUploading;
+  const uploadFailed =
+    uploadStatus?.success === false &&
+    uploadStatus?.failed === true &&
+    uploadedChunksCount === 0;
 
   // Determine if current user is the caller or recipient
   const normalizeNumber = normalizePhoneNumber;
   const myNorm = normalizeNumber(myPhoneNumber);
   const fromNorm = normalizeNumber(call.from_number || '');
   const toNorm = normalizeNumber(call.to_number || '');
-  const isCaller = fromNorm === myNorm; // Current user initiated the call
-  const isRecipient = toNorm === myNorm; // Current user is being called
-
-  // Get the other party's username
-  const otherPartyUsername = isCaller
-    ? call.to_username || call.to_number || 'Unknown'
-    : call.from_username || call.from_number || 'Unknown';
+  const isCaller = fromNorm === myNorm;
+  const isRecipient = toNorm === myNorm;
 
   return (
     <div class='screen dialer-screen'>
@@ -193,7 +239,7 @@ export default function CallingView({
             style={{
               marginTop: '4px',
               fontSize: '14px',
-              colro: 'white',
+              color: 'white',
             }}
           >
             <span style={{ color: 'rgba(255, 255, 255, 0.5)' }}>calling </span>
@@ -208,49 +254,57 @@ export default function CallingView({
               color: 'rgba(255, 255, 255, 0.8)',
             }}
           >
-            calling {call.from_username}
+            calling{' '}
+            <span style={{ fontWeight: 'bold' }}>{call.from_username}</span>
           </div>
         )}
         <div class='caller-number'>{call.other_number}</div>
-        <div class='call-status'>
-          {isOnline ? 'Recording your voice...' : 'Playing their voice...'}
+
+        {/* Call Duration Timer - like a real phone call */}
+        <div
+          style={{
+            marginTop: '12px',
+            fontSize: '32px',
+            fontWeight: '300',
+            fontFamily: 'SF Mono, Monaco, Consolas, monospace',
+            color: '#fff',
+            letterSpacing: '2px',
+          }}
+        >
+          {formatDuration(callDuration)}
         </div>
-        {isOnline && (
-          <>
-            <div
-              style={{
-                marginTop: '8px',
-                fontSize: '18px',
-                fontWeight: '600',
-                color: '#34c759',
-                letterSpacing: '1px',
-              }}
-            >
-              {formatTime(elapsedTime)}
-            </div>
-            <div
-              style={{
-                marginTop: '4px',
-                fontSize: '14px',
-                fontWeight: '500',
-                color: uploadedChunksCount > 0 ? '#34c759' : '#ffcc00',
-                letterSpacing: '0.5px',
-              }}
-            >
-              {uploadedChunksCount > 0
-                ? `✅ ${uploadedChunksCount} chunk${
-                    uploadedChunksCount !== 1 ? 's' : ''
-                  } uploaded`
-                : '⏳ Waiting for first upload...'}
-            </div>
-          </>
-        )}
+
+        {!isOnline && <div class='call-status'>Playing their voice...</div>}
       </div>
 
-      <Visualizer
-        mode={isOnline ? 'recording' : 'playback'}
-        audioStream={isOnline ? audioStream : null}
-      />
+      {/* Progress Visualizer - shows recording progress via bar colors */}
+      {isOnline && (
+        <ProgressVisualizer
+          audioStream={audioStream}
+          progressPercent={isRecordingComplete ? 100 : progressPercent}
+          isUploaded={uploadSucceeded}
+          isUploading={isUploading}
+          uploadFailed={uploadFailed}
+        />
+      )}
+
+      {/* Fallback visualizer when offline */}
+      {!isOnline && (
+        <div
+          class='audio-visualizer playback-mode'
+          style={{ width: '95%', maxWidth: '360px', margin: '20px auto' }}
+        >
+          {Array(BAR_COUNT)
+            .fill(0)
+            .map((_, idx) => (
+              <div
+                class='bar playback'
+                key={idx}
+                style={{ height: `${20 + Math.random() * 30}px` }}
+              />
+            ))}
+        </div>
+      )}
 
       <div class='call-controls'>
         <button

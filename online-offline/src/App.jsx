@@ -198,6 +198,7 @@ export default function App() {
     }
   };
   const [uploadedChunksCount, setUploadedChunksCount] = useState(0); // Track number of chunks uploaded
+  const [uploadStatus, setUploadStatus] = useState(null); // { success: boolean, error?: string }
   const [incomingCallPayload, setIncomingCallPayload] = useState(null);
   const audioPlayerRef = useRef(null);
   const playedChunkIdsRef = useRef(new Set());
@@ -216,10 +217,16 @@ export default function App() {
   const isPlayingRef = useRef(false); // Ref to track playing state for closures
   const lastOfflineTimestampRef = useRef(null); // Track when we last went offline (to find first chunk of current online session)
   const firstChunkOfCurrentSessionRef = useRef(null); // Track the first chunk ID of the current online session
+  const seekTargetIndexRef = useRef(null); // Track the target chunk index after seek (null = use default)
 
   // Track state history for dual timeline visualization
   const myStateHistoryRef = useRef([]); // Array of {timestamp, state: 'recording'|'playback', isOnline}
   const otherStateHistoryRef = useRef([]); // Array of {timestamp, state: 'recording'|'playback'}
+
+  // Call duration timer - persists across view changes
+  const [callDuration, setCallDuration] = useState(0); // seconds since call started
+  const callStartTimeRef = useRef(null); // When the call became active
+  const callTimerIntervalRef = useRef(null); // Interval ID for the timer
 
   const isOnline = useOnlineStatus();
 
@@ -535,6 +542,68 @@ export default function App() {
 
     restoreCallState();
   }, [myPhoneNumber, isOnline]); // Run when phone number is set and connectivity changes
+
+  // Call duration timer - starts when call becomes active, persists across view changes
+  useEffect(() => {
+    const callStatus = String(currentCall?.status || '').toLowerCase();
+
+    if (callStatus === 'active' && !callStartTimeRef.current) {
+      // Call just became active - start the timer
+      // Use accepted_at if available, otherwise use current time
+      const startTime = currentCall?.accepted_at
+        ? new Date(currentCall.accepted_at).getTime()
+        : Date.now();
+      callStartTimeRef.current = startTime;
+
+      // Calculate initial duration (in case we're restoring state)
+      const initialDuration = Math.floor((Date.now() - startTime) / 1000);
+      setCallDuration(Math.max(0, initialDuration));
+
+      console.log('[App] ⏱️ Call timer started', {
+        callId: currentCall?.id,
+        startTime: new Date(startTime).toISOString(),
+        initialDuration,
+      });
+
+      // Start interval to update duration every second
+      callTimerIntervalRef.current = setInterval(() => {
+        if (callStartTimeRef.current) {
+          const elapsed = Math.floor(
+            (Date.now() - callStartTimeRef.current) / 1000,
+          );
+          setCallDuration(elapsed);
+        }
+      }, 1000);
+    } else if (callStatus !== 'active' && callStartTimeRef.current) {
+      // Call ended or changed status - stop the timer
+      console.log('[App] ⏱️ Call timer stopped', {
+        callId: currentCall?.id,
+        finalDuration: callDuration,
+      });
+
+      if (callTimerIntervalRef.current) {
+        clearInterval(callTimerIntervalRef.current);
+        callTimerIntervalRef.current = null;
+      }
+      callStartTimeRef.current = null;
+      // Don't reset callDuration here - let it persist for EndCallView
+    } else if (!currentCall) {
+      // No call - reset everything
+      if (callTimerIntervalRef.current) {
+        clearInterval(callTimerIntervalRef.current);
+        callTimerIntervalRef.current = null;
+      }
+      callStartTimeRef.current = null;
+      setCallDuration(0);
+    }
+
+    return () => {
+      // Cleanup on unmount
+      if (callTimerIntervalRef.current) {
+        clearInterval(callTimerIntervalRef.current);
+      }
+    };
+  }, [currentCall?.status, currentCall?.id, currentCall?.accepted_at]);
 
   useEffect(() => {
     // keep refs to subscriptions so we can cleanup precisely
@@ -1104,6 +1173,7 @@ export default function App() {
     // Reset playback state
     setCurrentPlayingChunkId(null);
     setCurrentChunkProgress(0);
+    seekTargetIndexRef.current = null; // Reset seek target
 
     // Fetch all chunks from IndexedDB cache (offline mode)
     (async () => {
@@ -1282,22 +1352,25 @@ export default function App() {
               }
             }
 
-            // Find the first unplayed chunk or continue from current
-            // Start from the first chunk of the current online session
-            let startIndex = firstChunkIndex;
-            if (currentPlayingChunkId) {
-              const currentIndex = otherPartyChunks.findIndex(
-                (c) => c.id === currentPlayingChunkId,
-              );
-              if (currentIndex !== -1 && currentIndex >= firstChunkIndex) {
-                startIndex = currentIndex;
-              }
+            // Determine start index:
+            // 1. If seekTargetIndexRef is set, use that (from seek())
+            // 2. Otherwise, start from first chunk (index 0) for simplicity
+            let startIndex = 0;
+            if (seekTargetIndexRef.current !== null) {
+              startIndex = seekTargetIndexRef.current;
+              // Clear the seek target after using it
+              seekTargetIndexRef.current = null;
             }
+
+            // Ensure startIndex is valid
+            if (startIndex < 0 || startIndex >= otherPartyChunks.length) {
+              startIndex = 0;
+            }
+
             console.log('[App] Starting playback from chunk index', {
               startIndex,
-              firstChunkIndex,
-              currentPlayingChunkId,
               totalChunks: otherPartyChunks.length,
+              chunkAtIndex: otherPartyChunks[startIndex]?.id,
             });
 
             // Play chunks in order starting from startIndex
@@ -1608,7 +1681,6 @@ export default function App() {
               try {
                 currentAudioRef.current.pause();
                 currentAudioRef.current.currentTime = 0;
-                // Remove all event listeners by creating a new audio element
                 currentAudioRef.current = null;
               } catch (e) {
                 console.warn('[App] Error cleaning up audio during seek', e);
@@ -1621,7 +1693,7 @@ export default function App() {
             setIsPlaying(false);
             isPlayingRef.current = false;
 
-            // Clear played chunks from this point forward
+            // Validate chunk index
             const targetChunk = otherPartyChunks[chunkIndex];
             if (!targetChunk) {
               console.warn('[App] Invalid chunk index for seek', {
@@ -1630,6 +1702,13 @@ export default function App() {
               });
               return;
             }
+
+            // Set the seek target so play() knows where to start
+            seekTargetIndexRef.current = chunkIndex;
+            console.log('[App] Set seek target', {
+              chunkIndex,
+              chunkId: targetChunk.id,
+            });
 
             // Mark chunks before target as played
             for (let i = 0; i < chunkIndex; i++) {
@@ -1648,7 +1727,7 @@ export default function App() {
             // Reset abort flag for new playback
             playbackAbortRef.current = false;
 
-            // Set current position
+            // Set current position in UI
             setCurrentPlayingChunkId(targetChunk.id);
             setCurrentChunkProgress(progress);
 
@@ -1663,7 +1742,7 @@ export default function App() {
                     );
                   });
                 }
-              }, 200); // Give time for cleanup
+              }, 200);
             }
           },
         };
@@ -1773,14 +1852,15 @@ export default function App() {
         setUploadedChunksCount(0);
         setView('connected');
       } else {
-        // when we regain connectivity, show live calling UI and RESTART RECORDING
-        console.log(
-          '[connectivity effect] Coming back online - restarting recording',
-          {
-            callId: currentCall.id,
-            lastOfflineTimestamp: lastOfflineTimestampRef.current,
-          },
-        );
+        // when we regain connectivity, show live calling UI
+        // BUT: Only restart recording if we haven't already uploaded for this call
+        // (we only record ONCE per online period, not continuously)
+        console.log('[connectivity effect] Coming back online', {
+          callId: currentCall.id,
+          lastOfflineTimestamp: lastOfflineTimestampRef.current,
+          uploadedChunksCount,
+        });
+
         // Track state change: going to recording mode
         myStateHistoryRef.current.push({
           timestamp: new Date().toISOString(),
@@ -1788,8 +1868,9 @@ export default function App() {
           isOnline: true,
         });
         setView('calling');
-        // Restart recording when coming back online
-        // Use a small delay to ensure stopRecording has fully completed
+
+        // Only restart recording if we haven't uploaded yet for this online session
+        // Since we only record once per online period, don't restart if already uploaded
         if (currentCall && currentCall.id && myPhoneNumber) {
           // Reset the first chunk of current session - we'll track it when first chunk arrives
           firstChunkOfCurrentSessionRef.current = null;
@@ -1798,15 +1879,45 @@ export default function App() {
           // This was missing, causing "Waiting for first upload..." on 2nd+ online sessions
           const callIdForCallback = currentCall.id;
           setUploadProgressCallback(
-            ({ callId: uploadedCallId, path, publicUrl, error, failed }) => {
+            ({
+              callId: uploadedCallId,
+              path,
+              publicUrl,
+              error,
+              failed,
+              uploading,
+            }) => {
               if (uploadedCallId === callIdForCallback) {
-                if (failed) {
+                if (uploading) {
+                  console.log(
+                    '[connectivity effect] ⏳ Upload started (restart)',
+                    {
+                      callId: uploadedCallId,
+                    },
+                  );
+                  setUploadStatus({
+                    uploading: true,
+                    success: false,
+                    failed: false,
+                  });
+                } else if (failed) {
                   console.warn('[connectivity effect] ⚠️ Chunk upload failed', {
                     callId: uploadedCallId,
                     error,
                   });
+                  setUploadStatus({
+                    success: false,
+                    failed: true,
+                    uploading: false,
+                    error: error || 'Upload failed',
+                  });
                 } else {
                   setUploadedChunksCount((prev) => prev + 1);
+                  setUploadStatus({
+                    success: true,
+                    failed: false,
+                    uploading: false,
+                  });
                   console.log(
                     '[connectivity effect] ✅ Chunk uploaded (restart)',
                     {
@@ -1819,6 +1930,9 @@ export default function App() {
               }
             },
           );
+
+          // Reset upload status for new recording session
+          setUploadStatus(null);
 
           // Wait a bit to ensure any previous stopRecording has completed
           setTimeout(() => {
@@ -2400,7 +2514,14 @@ export default function App() {
     // Set up upload progress callback BEFORE starting recording
     // This ensures the callback is ready when the first chunk is uploaded
     setUploadProgressCallback(
-      ({ callId: uploadedCallId, path, publicUrl, error, failed }) => {
+      ({
+        callId: uploadedCallId,
+        path,
+        publicUrl,
+        error,
+        failed,
+        uploading,
+      }) => {
         console.log('[handleStartCall] Upload progress callback received', {
           uploadedCallId,
           expectedCallId: callId,
@@ -2408,16 +2529,28 @@ export default function App() {
           publicUrl,
           error,
           failed,
+          uploading,
           currentCount: uploadedChunksCount,
         });
 
         if (uploadedCallId === callId) {
-          if (failed) {
+          // Check if this is an "uploading" notification (not success/failure yet)
+          if (uploading) {
+            console.log('[handleStartCall] ⏳ Upload started', {
+              callId: uploadedCallId,
+            });
+            setUploadStatus({ uploading: true, success: false, failed: false });
+          } else if (failed) {
             console.error('[handleStartCall] ❌ Chunk upload failed', {
               callId: uploadedCallId,
               error,
             });
-            // Don't increment counter on failure
+            setUploadStatus({
+              success: false,
+              failed: true,
+              uploading: false,
+              error: error || 'Upload failed',
+            });
           } else {
             setUploadedChunksCount((prev) => {
               const newCount = prev + 1;
@@ -2429,6 +2562,7 @@ export default function App() {
               });
               return newCount;
             });
+            setUploadStatus({ success: true, failed: false, uploading: false });
           }
         } else {
           console.warn('[handleStartCall] ⚠️ Callback for different call ID', {
@@ -2439,8 +2573,9 @@ export default function App() {
       },
     );
 
-    // Reset chunk counter
+    // Reset chunk counter and upload status
     setUploadedChunksCount(0);
+    setUploadStatus(null);
 
     // Track state: starting recording
     myStateHistoryRef.current.push({
@@ -2705,23 +2840,59 @@ export default function App() {
         isOnline,
         view: 'calling',
       });
-      // Set up upload progress callback
+      // Set up upload progress callback (handles both success and failure)
       setUploadProgressCallback(
-        ({ callId: uploadedCallId, path, publicUrl }) => {
+        ({
+          callId: uploadedCallId,
+          path,
+          publicUrl,
+          failed,
+          error,
+          uploading,
+        }) => {
           if (uploadedCallId === callRow.id) {
-            setUploadedChunksCount((prev) => prev + 1);
-            console.log('[handleAccept] ✅ Chunk uploaded', {
-              callId: uploadedCallId,
-              path,
-              publicUrl,
-              totalChunks: uploadedChunksCount + 1,
-            });
+            if (uploading) {
+              console.log('[handleAccept] ⏳ Upload started', {
+                callId: uploadedCallId,
+              });
+              setUploadStatus({
+                uploading: true,
+                success: false,
+                failed: false,
+              });
+            } else if (failed) {
+              console.log('[handleAccept] ❌ Chunk upload failed', {
+                callId: uploadedCallId,
+                path,
+                error,
+              });
+              setUploadStatus({
+                success: false,
+                failed: true,
+                uploading: false,
+                error: error || 'Upload failed',
+              });
+            } else {
+              setUploadedChunksCount((prev) => prev + 1);
+              setUploadStatus({
+                success: true,
+                failed: false,
+                uploading: false,
+              });
+              console.log('[handleAccept] ✅ Chunk uploaded', {
+                callId: uploadedCallId,
+                path,
+                publicUrl,
+                totalChunks: uploadedChunksCount + 1,
+              });
+            }
           }
         },
       );
 
-      // Reset chunk counter
+      // Reset chunk counter and upload status
       setUploadedChunksCount(0);
+      setUploadStatus(null);
 
       // Track state: starting recording (accepting call)
       myStateHistoryRef.current.push({
@@ -2902,8 +3073,10 @@ export default function App() {
           onEnd={handleEnd}
           audioStream={getCurrentAudioStream()}
           uploadedChunksCount={uploadedChunksCount}
+          uploadStatus={uploadStatus}
           myPhoneNumber={myPhoneNumber}
           myUsername={myUsername}
+          callDuration={callDuration}
         />
       )}
       {view === 'connected' && currentCall && (
@@ -2919,6 +3092,7 @@ export default function App() {
           callStartTime={currentCall.created_at}
           myStateHistory={myStateHistoryRef.current}
           otherStateHistory={otherStateHistoryRef.current}
+          callDuration={callDuration}
         />
       )}
       {view === 'end' && <EndCallView onDone={handleEndDone} />}

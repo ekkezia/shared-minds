@@ -235,28 +235,44 @@ export async function resolvePlayableUrl(url) {
 }
 
 // --- MediaRecorder wrapper ---
+// SIMPLIFIED: Record for 20 seconds, then upload ONE chunk per online period
 let mediaRecorder = null;
 let currentAudioStream = null; // Store the audio stream for visualization
 let chunkIndex = 0;
 let currentCallId = null;
 let onUploadProgress = null;
-let chunkIntervalId = null; // Interval ID for restarting MediaRecorder
-let isStoppingForChunk = false; // Flag to prevent multiple stops
-let currentRecorderId = 0; // Track MediaRecorder instances to filter stale events
-let isRestarting = false; // Flag to prevent multiple simultaneous restarts
-let restartTimeoutId = null; // Timeout ID for scheduled restart
-let isProcessingChunk = false; // Flag to prevent processing multiple chunks simultaneously
-let lastChunkProcessedTime = 0; // Timestamp of last chunk processing to enforce 5s interval
-let processedChunkIds = new Set(); // Track processed chunk IDs to prevent duplicate callbacks
-// Lower threshold for mobile devices - they may produce smaller chunks initially
-const MIN_CHUNK_SIZE = 256; // Minimum 256 bytes (reduced from 1KB to support mobile)
-const MOBILE_MIN_CHUNK_SIZE = 0; // No minimum for mobile - accept ANY chunk with data
-const MIN_CHUNK_INTERVAL_MS = 4500; // Minimum 4.5 seconds between chunk processing (slightly less than 5s to account for timing)
+let recordingTimeoutId = null; // Timeout ID for 20-second recording limit
+let hasUploadedThisSession = false; // Track if we've already uploaded this online session
+
+// Recording duration: 20 seconds per online period
+const RECORDING_DURATION_MS = 20000;
 
 export function setUploadProgressCallback(fn) {
   onUploadProgress = fn;
 }
 
+/**
+ * Check if we've already uploaded for this online session
+ * Used to prevent multiple recordings in the same online period
+ */
+export function hasUploadedForSession() {
+  return hasUploadedThisSession;
+}
+
+/**
+ * Reset the upload session flag (call when starting a new call)
+ */
+export function resetUploadSession() {
+  hasUploadedThisSession = false;
+  console.log('[audioService] Reset upload session flag');
+}
+
+/**
+ * SIMPLIFIED startRecording:
+ * - Records for 20 seconds (one chunk per online period)
+ * - Uploads once when recording stops
+ * - Calls onUploadProgress with success/failure status
+ */
 export async function startRecording(callId, myPhoneNumber) {
   // Check for secure context (HTTPS required for MediaRecorder, but localhost is also secure)
   const isSecureContext =
@@ -308,178 +324,88 @@ export async function startRecording(callId, myPhoneNumber) {
       '[startRecording] ⚠️ No supported audio format found, using default',
     );
   }
-  // Check if this is a restart for the same call (preserve chunkIndex) or a new call (reset chunkIndex)
-  // IMPORTANT: Check BEFORE any cleanup to ensure we detect restart correctly
-  // Also check if callId matches (defensive - in case currentCallId was cleared but we're restarting)
+
+  // Check if this is a restart for the same call
   const isRestartForSameCall =
     (currentCallId === callId && currentCallId !== null) ||
-    (currentCallId === null && chunkIndex > 0); // If chunkIndex > 0 but currentCallId is null, we're likely restarting
+    (currentCallId === null && chunkIndex > 0);
 
-  console.log('[startRecording] Checking if restart for same call', {
-    callId,
-    currentCallId,
-    chunkIndex,
-    isRestartForSameCall,
-    mediaRecorderExists: !!mediaRecorder,
-    mediaRecorderState: mediaRecorder?.state,
-    reasoning:
-      currentCallId === callId
-        ? 'currentCallId matches callId'
-        : chunkIndex > 0 && currentCallId === null
-        ? 'chunkIndex > 0 suggests restart (restoring callId)'
-        : 'new call',
-  });
-
-  // If already recording for this call, don't restart
-  if (
-    isRestartForSameCall &&
-    mediaRecorder &&
-    mediaRecorder.state === 'recording'
-  ) {
-    console.log('[startRecording] Already recording for this call, skipping', {
+  console.log(
+    '[startRecording] 🎤 SIMPLIFIED Recording (20s per online period)',
+    {
       callId,
-      currentState: mediaRecorder.state,
+      myPhoneNumber,
+      isRestartForSameCall,
       currentChunkIndex: chunkIndex,
+      hasUploadedThisSession,
+      recordingDuration: `${RECORDING_DURATION_MS / 1000}s`,
+    },
+  );
+
+  // If already recording, skip
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    console.log('[startRecording] Already recording, skipping', {
+      callId,
+      state: mediaRecorder.state,
     });
     return;
   }
 
-  // Stop any existing recording first (but preserve chunkIndex if same call)
-  // Only stop if MediaRecorder exists and is in a state that needs stopping
+  // Clean up any existing recorder
   if (mediaRecorder) {
-    const needsStopping =
-      mediaRecorder.state === 'recording' || mediaRecorder.state === 'paused';
-    if (needsStopping) {
-      console.log(
-        '[startRecording] Stopping existing recording before starting new one',
-        {
-          callId,
-          currentState: mediaRecorder.state,
-          isRestartForSameCall,
-          currentChunkIndex: chunkIndex,
-        },
-      );
-      try {
-        // Pass a flag to stopRecording to preserve chunkIndex if restarting for same call
-        stopRecording(!isRestartForSameCall); // true = reset chunkIndex, false = preserve it
-      } catch (e) {
-        console.warn('[startRecording] Error stopping existing recording', e);
+    try {
+      if (mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
       }
-    } else {
-      console.log(
-        '[startRecording] MediaRecorder exists but in inactive state, cleaning up',
-        {
-          callId,
-          currentState: mediaRecorder.state,
-          isRestartForSameCall,
-          currentChunkIndex: chunkIndex,
-        },
-      );
-      // Clean up inactive MediaRecorder but preserve chunkIndex if same call
-      mediaRecorder = null;
-      if (currentAudioStream) {
-        currentAudioStream.getTracks().forEach((track) => track.stop());
-        currentAudioStream = null;
-      }
-      // Don't reset chunkIndex or currentCallId if restarting for same call
-      if (!isRestartForSameCall) {
-        currentCallId = null;
-        chunkIndex = 0;
-      }
+    } catch (e) {
+      console.warn('[startRecording] Error stopping existing recorder', e);
     }
-  } else {
-    // MediaRecorder is null (e.g., after stopRecording(false) when going offline)
-    // If we're restarting for the same call, preserve chunkIndex and currentCallId
-    // Otherwise, this is a new call and we should reset
-    if (!isRestartForSameCall) {
-      console.log(
-        '[startRecording] MediaRecorder is null and this is a new call - resetting',
-        {
-          callId,
-          currentCallId,
-          currentChunkIndex: chunkIndex,
-        },
-      );
-      currentCallId = null;
-      chunkIndex = 0;
-    } else {
-      console.log(
-        '[startRecording] MediaRecorder is null but restarting for same call - preserving state',
-        {
-          callId,
-          currentCallId,
-          preservedChunkIndex: chunkIndex,
-        },
-      );
-      // Ensure currentCallId is set (should already be set, but be defensive)
-      // This handles the case where currentCallId was cleared but chunkIndex > 0 indicates we're restarting
-      if (!currentCallId) {
-        console.warn(
-          '[startRecording] ⚠️ currentCallId was null but isRestartForSameCall is true - restoring',
-          {
-            callId,
-            chunkIndex,
-          },
-        );
-        currentCallId = callId;
-      }
-
-      // Also ensure chunkIndex is preserved (defensive check)
-      if (chunkIndex === 0 && isRestartForSameCall) {
-        console.warn(
-          '[startRecording] ⚠️ chunkIndex is 0 but isRestartForSameCall is true - this might be wrong',
-          {
-            callId,
-            currentCallId,
-            chunkIndex,
-          },
-        );
-      }
-    }
+    mediaRecorder = null;
   }
 
-  // Clear any pending restart
-  if (restartTimeoutId) {
-    clearTimeout(restartTimeoutId);
-    restartTimeoutId = null;
+  if (currentAudioStream) {
+    currentAudioStream.getTracks().forEach((track) => track.stop());
+    currentAudioStream = null;
   }
-  isRestarting = false;
 
-  // Set currentCallId (should already be set if restarting, but ensure it's set)
-  // CRITICAL: Always set currentCallId to callId, even if restarting
-  // This ensures it's set correctly even if it was somehow cleared
+  // Clear any pending timeout
+  if (recordingTimeoutId) {
+    clearTimeout(recordingTimeoutId);
+    recordingTimeoutId = null;
+  }
+
+  // Set up call tracking
   const previousCallId = currentCallId;
   currentCallId = callId;
 
-  // Only reset chunkIndex if this is a NEW call, not a restart for the same call
-  // IMPORTANT: chunkIndex should already be preserved from the cleanup section above
+  // Reset chunkIndex only for new calls
   if (!isRestartForSameCall) {
     chunkIndex = 0;
-    console.log('[startRecording] New call - resetting chunkIndex to 0', {
-      callId,
-      previousCallId,
-    });
+    hasUploadedThisSession = false; // Reset for new call
+    console.log('[startRecording] New call - resetting chunkIndex to 0');
   } else {
+    // For restart of same call (coming back online), we want to record a NEW chunk
+    // The chunkIndex was already incremented after the previous successful upload
+    // So we'll get a new file number (001, 002, 003, etc.)
     console.log(
-      '[startRecording] Restarting for same call - preserving chunkIndex',
+      '[startRecording] Restart for same call - will record new chunk',
       {
         callId,
-        previousCallId,
-        preservedChunkIndex: chunkIndex,
-        willContinueFrom: chunkIndex,
-        nextChunkWillBe: chunkIndex, // Next chunk will use this index
+        chunkIndex, // This will be the next chunk number
+        previouslyUploaded: hasUploadedThisSession,
       },
     );
   }
 
-  isProcessingChunk = false; // Reset processing flag
-  lastChunkProcessedTime = 0; // Reset timestamp
-  processedChunkIds.clear(); // Clear processed chunk IDs for new recording session
+  // Reset the session flag for this new online period
+  // This allows recording once per online period
+  hasUploadedThisSession = false;
 
-  console.log('[startRecording] Starting audio recording', {
+  console.log('[startRecording] Starting 20-second recording session', {
     callId,
     myPhoneNumber,
-    chunkInterval: '5000ms (5 seconds)',
+    chunkIndex,
+    hasUploadedThisSession,
   });
 
   // Get audio stream with better error handling for mobile
@@ -536,854 +462,267 @@ export async function startRecording(callId, myPhoneNumber) {
     );
   }
 
-  const CHUNK_MS = 5000;
-  // Reset flags
-  isStoppingForChunk = false;
-  if (chunkIntervalId) {
-    clearInterval(chunkIntervalId);
-    chunkIntervalId = null;
-  }
+  // Collect all audio data in this array
+  const audioChunks = [];
 
-  // Define the data handler function with recorder ID tracking
-  const createDataHandler = (recorderId) => {
-    return async (evt) => {
-      // CRITICAL: Prevent processing multiple chunks simultaneously
-      if (isProcessingChunk) {
-        console.warn(
-          '[startRecording] ⚠️ Already processing a chunk, ignoring this event',
-          {
-            callId,
-            recorderId,
-            dataSize: evt.data?.size || 0,
-          },
-        );
-        return; // Ignore if we're already processing a chunk
-      }
-
-      // CRITICAL: Enforce minimum interval between chunk processing (5 seconds)
-      const now = Date.now();
-      const timeSinceLastChunk = now - lastChunkProcessedTime;
-      if (
-        lastChunkProcessedTime > 0 &&
-        timeSinceLastChunk < MIN_CHUNK_INTERVAL_MS
-      ) {
-        console.warn(
-          '[startRecording] ⚠️ Chunk received too soon, ignoring (rate limiting)',
-          {
-            callId,
-            recorderId,
-            timeSinceLastChunk: `${timeSinceLastChunk}ms`,
-            minInterval: `${MIN_CHUNK_INTERVAL_MS}ms`,
-            dataSize: evt.data?.size || 0,
-          },
-        );
-        return; // Ignore chunks that arrive too quickly
-      }
-
-      // CRITICAL: Only process data from the current active MediaRecorder
-      // This prevents processing stale events from previous MediaRecorder instances
-      const isMobile =
-        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-          navigator.userAgent,
-        );
-
-      // On mobile, completely disable recorder ID check - accept ALL chunks with data
-      // This is necessary because mobile devices have timing issues with MediaRecorder
-      if (!isMobile && recorderId !== currentRecorderId) {
-        console.warn(
-          '[startRecording] ⚠️ Ignoring data from stale MediaRecorder',
-          {
-            callId,
-            eventRecorderId: recorderId,
-            currentRecorderId,
-            dataSize: evt.data?.size || 0,
-          },
-        );
-        return; // Ignore data from old MediaRecorder instances (desktop only)
-      }
-
-      // Mark that we're processing a chunk
-      // NOTE: Don't update lastChunkProcessedTime here - update it AFTER successful upload
-      // This ensures rate limiting is based on actual upload completion, not event arrival
-      isProcessingChunk = true;
-
-      // On mobile, log but accept the chunk regardless of recorder ID
-      if (isMobile && recorderId !== currentRecorderId) {
-        console.log(
-          '[startRecording] 📱 Mobile: Accepting chunk (ID check disabled)',
-          {
-            callId,
-            eventRecorderId: recorderId,
-            currentRecorderId,
-            dataSize: evt.data?.size || 0,
-          },
-        );
-      }
-
-      // Debug logging for mobile
-      if (isMobile) {
-        console.log('[startRecording] 📱 Mobile device - processing chunk', {
-          callId,
-          recorderId,
-          currentRecorderId,
-          dataSize: evt.data?.size || 0,
-          hasData: !!evt.data,
-        });
-      }
-
-      // Log every dataavailable event for debugging
-      console.log('[startRecording] 📦 ondataavailable event', {
+  // Handle data available - just collect chunks
+  mediaRecorder.ondataavailable = (evt) => {
+    if (evt.data && evt.data.size > 0) {
+      audioChunks.push(evt.data);
+      console.log('[startRecording] 📦 Audio data collected', {
         callId,
-        chunkIndex,
-        recorderId,
-        hasData: !!evt.data,
-        dataSize: evt.data?.size || 0,
-        mediaRecorderState: mediaRecorder?.state,
-        userAgent: navigator.userAgent,
+        chunkSize: evt.data.size,
+        totalChunks: audioChunks.length,
       });
+    }
+  };
 
-      // STRICT VALIDATION: Filter out empty or invalid chunks BEFORE upload
-      if (!evt.data) {
-        console.warn('[startRecording] ⚠️ No data in event, skipping', {
-          callId,
+  // Handle recording stop - upload the complete audio
+  // IMPORTANT: Use captured callId and myPhoneNumber from when startRecording was called
+  const capturedCallId = callId;
+  const capturedPhoneNumber = myPhoneNumber;
+
+  mediaRecorder.onstop = async () => {
+    // Verify we're still on the same call
+    if (currentCallId !== capturedCallId) {
+      console.warn('[startRecording] ⚠️ Call ID changed, skipping upload', {
+        capturedCallId,
+        currentCallId,
+      });
+      return;
+    }
+
+    console.log('[startRecording] ⏹️ Recording stopped, preparing upload', {
+      callId: capturedCallId,
+      totalDataChunks: audioChunks.length,
+      hasUploadedThisSession,
+    });
+
+    // Don't upload if already uploaded this session or no data
+    if (hasUploadedThisSession) {
+      console.log('[startRecording] Already uploaded this session, skipping');
+      return;
+    }
+
+    if (audioChunks.length === 0) {
+      console.warn('[startRecording] No audio data to upload');
+      // Notify UI of failure
+      if (onUploadProgress) {
+        onUploadProgress({
+          callId: capturedCallId,
           chunkIndex,
-          recorderId,
+          failed: true,
+          error: 'No audio data recorded',
         });
-        isProcessingChunk = false; // Clear flag on early return
-        return;
       }
+      return;
+    }
 
-      if (evt.data.size === 0) {
-        console.warn(
-          '[startRecording] ⚠️ Empty chunk (0 bytes), skipping upload',
-          {
-            callId,
-            chunkIndex,
-            recorderId,
-            mediaRecorderState: mediaRecorder?.state,
-          },
-        );
-        isProcessingChunk = false; // Clear flag on early return
-        return; // Skip empty chunks completely
-      }
+    // Combine all chunks into one blob
+    const mimeTypeToUse = mediaRecorder?.mimeType || 'audio/webm';
+    const blob = new Blob(audioChunks, { type: mimeTypeToUse });
+    console.log('[startRecording] 🎤 Combined audio blob', {
+      callId: capturedCallId,
+      blobSize: blob.size,
+      blobType: blob.type,
+      chunkIndex,
+    });
 
-      // MINIMUM SIZE VALIDATION: Chunks must be at least MIN_CHUNK_SIZE bytes
-      // This filters out incomplete or corrupted chunks
-      // Note: For mobile, we use NO minimum (0 bytes) to accommodate any valid data
-      const minSizeForDevice = isMobile
-        ? MOBILE_MIN_CHUNK_SIZE
-        : MIN_CHUNK_SIZE;
+    // Create file path - use captured values to ensure correct path
+    const paddedChunkNum = String(chunkIndex).padStart(3, '0');
+    const path = `call-${capturedCallId}/${capturedPhoneNumber}/${paddedChunkNum}.webm`;
 
-      if (evt.data.size < minSizeForDevice) {
-        console.warn(
-          '[startRecording] ⚠️ Chunk too small, likely incomplete or corrupted',
-          {
-            callId,
-            chunkIndex,
-            recorderId,
-            dataSize: evt.data.size,
-            minSize: minSizeForDevice,
-            mediaRecorderState: mediaRecorder?.state,
-            isMobile,
-            userAgent: navigator.userAgent,
-          },
-        );
-        // On mobile, accept ANY chunk with data (even very small ones)
-        // Desktop requires minimum size to filter out incomplete chunks
-        if (isMobile && evt.data.size > 0) {
-          console.log(
-            '[startRecording] 📱 Allowing small chunk on mobile (has data)',
-            {
-              callId,
-              chunkIndex,
-              dataSize: evt.data.size,
-            },
-          );
-          // Continue processing - don't return
-        } else {
-          isProcessingChunk = false; // Clear flag on early return
-          return; // Skip chunks that are too small (desktop only)
-        }
-      }
+    // Notify UI that upload is starting
+    if (onUploadProgress) {
+      onUploadProgress({
+        callId: capturedCallId,
+        chunkIndex,
+        uploading: true,
+        failed: false,
+      });
+    }
 
-      const blob = evt.data;
-      const timestamp = Date.now();
-      // Organize audio by participant: call-{callId}/{phoneNumber}/{paddedChunkNum}.webm
-      // Use padded format: 001, 002, 003, etc. (continues from where we left off)
-      const chunkNum = chunkIndex; // Use current index before incrementing
-      const paddedChunkNum = String(chunkNum).padStart(3, '0'); // 001, 002, 003, etc.
-      const path = `call-${callId}/${myPhoneNumber}/${paddedChunkNum}.webm`;
-      // Create a unique chunk ID to prevent duplicate callbacks
-      const chunkUploadId = `${callId}-${paddedChunkNum}-${timestamp}`;
+    // Create upload with timeout (15 seconds max)
+    const UPLOAD_TIMEOUT_MS = 15000;
+    let uploadTimedOut = false;
 
-      // Check if we've already processed this chunk (prevent duplicate callbacks)
-      if (processedChunkIds.has(chunkUploadId)) {
-        console.warn(
-          '[startRecording] ⚠️ Duplicate chunk upload ID detected, skipping callback',
-          {
-            callId,
-            chunkNum,
-            chunkUploadId,
-          },
-        );
-        isProcessingChunk = false; // Clear flag
-        return; // Don't process duplicate chunks
-      }
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        uploadTimedOut = true;
+        reject(new Error('Upload timed out after 15 seconds'));
+      }, UPLOAD_TIMEOUT_MS);
+    });
 
-      // Mark this chunk as processed
-      processedChunkIds.add(chunkUploadId);
-
-      // DON'T increment chunkIndex yet - only increment AFTER successful upload
-      // This prevents gaps in chunk numbering if upload fails
-      console.log('[startRecording] 🎤 Valid audio chunk created', {
-        callId,
-        chunkNumber: chunkNum,
-        paddedChunkNum,
-        recorderId,
-        chunkSize: `${(blob.size / 1024).toFixed(2)} KB`,
-        chunkSizeBytes: blob.size,
-        blobType: blob.type,
-        timestamp,
+    try {
+      console.log('[startRecording] ⬆️ Uploading audio...', {
+        callId: capturedCallId,
         path,
-        mediaRecorderState: mediaRecorder?.state,
-        userAgent: navigator.userAgent,
+        blobSize: blob.size,
+        timeout: `${UPLOAD_TIMEOUT_MS / 1000}s`,
       });
 
-      // Additional validation: Check if blob type is valid
-      if (
-        !blob.type ||
-        (!blob.type.includes('webm') && !blob.type.includes('mp4'))
-      ) {
-        console.warn('[startRecording] ⚠️ Unexpected blob type', {
-          callId,
-          chunkNumber: chunkNum,
-          recorderId,
-          blobType: blob.type,
-          blobSize: blob.size,
-        });
-        // Continue anyway - some browsers might not set type correctly
-      }
-
-      try {
-        const isMobile =
-          /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-            navigator.userAgent,
-          );
-        console.log('[startRecording] Uploading chunk to storage...', {
-          callId,
-          chunkNumber: chunkNum,
-          path,
-          blobSize: blob.size,
-          isMobile,
-        });
-
+      // Race between upload and timeout
+      const uploadPromise = (async () => {
         const { publicUrl, path: filePath } = await uploadToStorage(
           'call-audio',
           path,
           blob,
         );
 
-        console.log('[startRecording] Chunk uploaded to storage', {
-          callId,
-          chunkNumber: chunkNum,
+        console.log('[startRecording] ✅ Audio uploaded to storage', {
+          callId: capturedCallId,
           publicUrl,
           filePath,
-          blobSize: blob.size,
-          isMobile,
         });
 
-        console.log('[startRecording] Inserting chunk into database...', {
-          callId,
-          chunkNumber: chunkNum,
-          from_number: myPhoneNumber,
-          isMobile,
+        // Insert into database
+        await insertAudioChunkRow({
+          call_id: capturedCallId,
+          from_number: capturedPhoneNumber,
+          url: publicUrl,
+          file_path: filePath,
         });
 
-        let insertResult;
-        try {
-          insertResult = await insertAudioChunkRow({
-            call_id: callId,
-            from_number: myPhoneNumber,
-            url: publicUrl,
-            file_path: filePath,
-          });
-          console.log(
-            '[startRecording] ✅ Chunk successfully uploaded and saved to database',
-            {
-              callId,
-              chunkNumber: chunkNum,
-              paddedChunkNum,
-              from_number: myPhoneNumber,
-              publicUrl,
-              filePath,
-              blobSize: blob.size,
-              timestamp: new Date().toISOString(),
-              isMobile,
-              insertResult,
-            },
-          );
-        } catch (insertErr) {
-          console.error(
-            '[startRecording] ❌ Failed to insert chunk into database',
-            {
-              callId,
-              chunkNumber: chunkNum,
-              paddedChunkNum,
-              from_number: myPhoneNumber,
-              publicUrl,
-              filePath,
-              error: insertErr,
-              errorMessage: insertErr?.message,
-            },
-          );
-          // Don't increment chunkIndex if insert failed - this will cause a gap
-          // but prevents incorrect numbering
-          isProcessingChunk = false;
-          return; // Exit early - don't continue processing this chunk
-        }
+        return { publicUrl, filePath };
+      })();
 
-        // CRITICAL: Only increment chunkIndex AFTER successful upload
-        // This ensures no gaps in chunk numbering
-        chunkIndex += 1;
-        console.log(
-          '[startRecording] Incremented chunkIndex after successful upload',
-          {
-            callId,
-            newChunkIndex: chunkIndex,
-            uploadedChunkNumber: chunkNum,
-          },
-        );
+      const { publicUrl, filePath } = await Promise.race([
+        uploadPromise,
+        timeoutPromise,
+      ]);
 
-        // Update lastChunkProcessedTime AFTER successful upload
-        // This ensures rate limiting is based on actual upload completion, not event arrival
-        lastChunkProcessedTime = Date.now();
+      // Mark as uploaded ONLY after successful upload
+      hasUploadedThisSession = true;
 
-        // attempt caching
-        cacheAudioUrl(publicUrl).catch((cacheErr) => {
-          console.warn('[startRecording] Cache failed (non-critical)', {
-            callId,
-            chunkNumber: chunkNum,
-            error: cacheErr,
-          });
+      console.log('[startRecording] ✅ Audio chunk saved to database', {
+        callId: capturedCallId,
+        chunkIndex,
+        publicUrl,
+      });
+
+      // Increment chunk index for next session
+      chunkIndex += 1;
+
+      // Cache for offline playback
+      cacheAudioUrl(publicUrl).catch((err) => {
+        console.warn('[startRecording] Cache failed (non-critical)', err);
+      });
+
+      // Notify UI of success
+      if (onUploadProgress) {
+        onUploadProgress({
+          callId: capturedCallId,
+          chunkIndex: chunkIndex - 1, // The chunk we just uploaded
+          path,
+          publicUrl,
+          failed: false,
         });
-
-        // Call upload progress callback - CRITICAL for UI feedback
-        // Only call once per chunk (prevent duplicates)
-        if (onUploadProgress) {
-          try {
-            console.log(
-              '[startRecording] 📞 Calling upload progress callback',
-              {
-                callId,
-                chunkNumber: chunkNum,
-                chunkUploadId,
-                isMobile,
-                timestamp: new Date().toISOString(),
-              },
-            );
-            onUploadProgress({ callId, path, publicUrl });
-            console.log(
-              '[startRecording] ✅ Upload progress callback called successfully',
-              {
-                callId,
-                chunkNumber: chunkNum,
-                chunkUploadId,
-                isMobile,
-              },
-            );
-          } catch (callbackErr) {
-            console.error(
-              '[startRecording] ❌ Upload progress callback error',
-              {
-                callId,
-                chunkNumber: chunkNum,
-                chunkUploadId,
-                error: callbackErr,
-              },
-            );
-          }
-        } else {
-          console.warn('[startRecording] ⚠️ No upload progress callback set', {
-            callId,
-            chunkNumber: chunkNum,
-            chunkUploadId,
-          });
-        }
-
-        // After successfully uploading a chunk, restart the recorder for the next chunk
-        // This ensures continuous recording without relying on setInterval
-        // Use a small delay to ensure the current chunk is fully processed
-        // Only restart if we're still recording for this call and not already restarting
-        if (restartTimeoutId) {
-          clearTimeout(restartTimeoutId);
-        }
-        restartTimeoutId = setTimeout(() => {
-          restartTimeoutId = null;
-          // Clear processing flag before restarting
-          isProcessingChunk = false;
-          if (
-            currentCallId === callId &&
-            mediaRecorder?.state === 'recording' &&
-            !isStoppingForChunk &&
-            !isRestarting
-          ) {
-            console.log(
-              '[startRecording] Triggering restart after chunk upload',
-              {
-                callId,
-                chunkNumber: chunkNum,
-                currentState: mediaRecorder.state,
-              },
-            );
-            restartRecording().catch((err) => {
-              console.error(
-                '[startRecording] Error restarting after chunk upload',
-                {
-                  callId,
-                  chunkNumber: chunkNum,
-                  error: err,
-                },
-              );
-              // Clear processing flag on error
-              isProcessingChunk = false;
-            });
-          } else {
-            console.log(
-              '[startRecording] Skipping restart - conditions not met',
-              {
-                callId,
-                currentCallId,
-                recorderState: mediaRecorder?.state,
-                isStoppingForChunk,
-                isRestarting,
-              },
-            );
-            // Clear processing flag if we're not restarting
-            isProcessingChunk = false;
-          }
-        }, 200); // Small delay to ensure upload completes
-      } catch (err) {
-        // Clear processing flag on error
-        // DON'T increment chunkIndex on error - this prevents gaps
-        isProcessingChunk = false;
-        // CRITICAL: Log upload errors with full details for debugging
-        const isMobile =
-          /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-            navigator.userAgent,
-          );
-        console.error('[startRecording] ❌ Error uploading audio chunk', {
-          callId,
-          chunkNumber: chunkNum,
-          recorderId,
-          blobSize: blob.size,
-          error: err,
-          errorName: err.name,
-          errorMessage: err.message,
-          errorStack: err.stack,
-          isMobile,
-          userAgent: navigator.userAgent,
-        });
-
-        // Still try to call the callback with error info (for debugging)
-        if (onUploadProgress) {
-          try {
-            onUploadProgress({
-              callId,
-              path: null,
-              publicUrl: null,
-              error: err.message,
-              failed: true,
-            });
-          } catch (callbackErr) {
-            // Ignore callback errors
-          }
-        }
-        // Don't re-throw - allow other chunks to continue uploading
       }
-    };
-  };
 
-  // Create handler for the initial MediaRecorder
-  currentRecorderId = 0;
-  const handleDataAvailable = createDataHandler(currentRecorderId);
+      console.log('[startRecording] ✅ Upload complete!', {
+        callId: capturedCallId,
+        uploadedChunkIndex: chunkIndex - 1,
+      });
+    } catch (err) {
+      const isTimeout = err?.message?.includes('timed out');
+      console.error('[startRecording] ❌ Upload failed', {
+        callId: capturedCallId,
+        chunkIndex,
+        error: err,
+        errorMessage: err?.message,
+        isTimeout,
+        uploadTimedOut,
+      });
 
-  const isMobile =
-    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-      navigator.userAgent,
-    );
-  console.log('[startRecording] Initial MediaRecorder setup', {
-    callId,
-    recorderId: currentRecorderId,
-    mimeType: mediaRecorder.mimeType,
-    state: mediaRecorder.state,
-    isMobile,
-    userAgent: navigator.userAgent,
-  });
+      // DON'T mark as uploaded on failure - allow retry on next online period
+      // hasUploadedThisSession stays false
 
-  // Attach the handler to MediaRecorder
-  mediaRecorder.ondataavailable = handleDataAvailable;
+      // Notify UI of failure - chunk will be shown in red
+      if (onUploadProgress) {
+        onUploadProgress({
+          callId: capturedCallId,
+          chunkIndex,
+          path,
+          failed: true,
+          error: isTimeout
+            ? 'Upload timed out - network too slow'
+            : err?.message || 'Upload failed',
+        });
+      }
 
-  mediaRecorder.onstart = () => {
-    console.log('[startRecording] ✅ MediaRecorder started', {
-      callId,
-      state: mediaRecorder.state,
-      chunkInterval: `${CHUNK_MS}ms`,
-      mimeType: mediaRecorder.mimeType,
-    });
+      // DON'T increment chunk index on failure - retry with same index
+      // This way the next online session will try to upload the same chunk number
+      console.log('[startRecording] ⚠️ Keeping chunkIndex for retry', {
+        callId: capturedCallId,
+        chunkIndex,
+        reason: 'Upload failed, will retry on next online period',
+      });
+    }
   };
 
   mediaRecorder.onerror = (event) => {
     console.error('[startRecording] ❌ MediaRecorder error', {
-      callId,
+      callId: capturedCallId,
       error: event.error,
       errorMessage: event.error?.message,
-      state: mediaRecorder?.state,
     });
   };
 
-  mediaRecorder.onstop = () => {
-    console.log('[startRecording] ⏹️ MediaRecorder stopped', {
-      callId,
-      state: mediaRecorder?.state,
-    });
-  };
-
-  mediaRecorder.onpause = () => {
-    console.log('[startRecording] ⏸️ MediaRecorder paused', {
-      callId,
-      state: mediaRecorder?.state,
-    });
-  };
-
-  mediaRecorder.onresume = () => {
-    console.log('[startRecording] ▶️ MediaRecorder resumed', {
-      callId,
-      state: mediaRecorder?.state,
-    });
-  };
-
-  // CRITICAL FIX: Stop and create a NEW MediaRecorder every CHUNK_MS to create complete, playable webm files
-  // When reusing the same MediaRecorder, there can be timing issues with ondataavailable events.
-  // By creating a new MediaRecorder for each chunk, we ensure clean state and complete files.
-
-  let stopPromiseResolver = null;
-  let stopPromise = null;
-
-  // Set up onstop handler to resolve the promise when recording stops
-  const originalOnStop = mediaRecorder.onstop;
-  mediaRecorder.onstop = (event) => {
-    console.log('[startRecording] ⏹️ MediaRecorder stopped', {
-      callId,
-      state: mediaRecorder?.state,
-    });
-    if (originalOnStop) {
-      try {
-        originalOnStop.call(mediaRecorder, event);
-      } catch (e) {
-        // Ignore errors from original handler
-      }
-    }
-    if (stopPromiseResolver) {
-      stopPromiseResolver(undefined);
-      stopPromiseResolver = null;
-    }
-  };
-
-  // Store mimeType for recovery scenarios
-  const savedMimeType = mediaRecorder.mimeType;
-
-  const restartRecording = async () => {
-    if (isStoppingForChunk || isRestarting) {
-      console.log(
-        '[startRecording] Already stopping/restarting, skipping restart',
-        {
-          isStoppingForChunk,
-          isRestarting,
-        },
-      );
-      return;
-    }
-
-    isStoppingForChunk = true;
-    isRestarting = true;
-
-    const isMobile =
-      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-        navigator.userAgent,
-      );
-
-    if (mediaRecorder && mediaRecorder.state === 'recording') {
-      console.log(
-        '[startRecording] Stopping MediaRecorder to create complete chunk',
-        {
-          callId,
-          chunkIndex,
-          isMobile,
-        },
-      );
-
-      try {
-        // Create a promise that resolves when MediaRecorder stops
-        stopPromise = new Promise((resolve) => {
-          stopPromiseResolver = resolve;
-        });
-
-        // Request final data before stopping
-        mediaRecorder.requestData();
-        mediaRecorder.stop();
-
-        // Wait for stop event to ensure all data is available
-        await stopPromise;
-
-        // Small delay to ensure cleanup
-        await new Promise((resolve) => setTimeout(resolve, 200));
-
-        // Create a NEW MediaRecorder for the next chunk (ensures clean state)
-        let streamToUse = currentAudioStream;
-        if (!streamToUse || !streamToUse.active) {
-          console.warn(
-            '[startRecording] Stream inactive, getting new stream...',
-          );
-          try {
-            streamToUse = await navigator.mediaDevices.getUserMedia({
-              audio: true,
-            });
-            currentAudioStream = streamToUse;
-          } catch (err) {
-            console.error('[startRecording] Failed to get new stream', err);
-            isStoppingForChunk = false;
-            isRestarting = false;
-            return;
-          }
-        }
-
-        // On mobile, try to reuse the same MediaRecorder instead of creating a new one
-        // This avoids timing issues and ID mismatches
-        // BUT: MediaRecorder can't be restarted after stop() - we MUST create a new one
-        // So we'll always create a new MediaRecorder, but we'll be more lenient with ID checks
-
-        // Create new MediaRecorder with same options (desktop or mobile fallback)
-        const options = mediaRecorder.mimeType
-          ? { mimeType: mediaRecorder.mimeType }
-          : {};
-        const oldMimeType = mediaRecorder.mimeType;
-
-        // Increment recorder ID to track new instance
-        currentRecorderId += 1;
-        console.log('[startRecording] Creating new MediaRecorder instance', {
-          callId,
-          newRecorderId: currentRecorderId,
-          mimeType: oldMimeType,
-          isMobile,
-          userAgent: navigator.userAgent,
-        });
-
-        try {
-          mediaRecorder = new MediaRecorder(streamToUse, options);
-          console.log('[startRecording] ✅ New MediaRecorder created', {
-            callId,
-            recorderId: currentRecorderId,
-            mimeType: mediaRecorder.mimeType,
-            state: mediaRecorder.state,
-            userAgent: navigator.userAgent,
-          });
-        } catch (err) {
-          console.error(
-            '[startRecording] ❌ Failed to create new MediaRecorder',
-            {
-              callId,
-              recorderId: currentRecorderId,
-              error: err,
-              errorMessage: err.message,
-              userAgent: navigator.userAgent,
-            },
-          );
-          throw err; // Re-throw to trigger recovery
-        }
-
-        // Create new handler for this MediaRecorder instance
-        const newHandleDataAvailable = createDataHandler(currentRecorderId);
-
-        // Re-attach all handlers
-        mediaRecorder.ondataavailable = newHandleDataAvailable;
-        mediaRecorder.onstart = () => {
-          console.log(
-            '[startRecording] ✅ MediaRecorder started (new instance)',
-            {
-              callId,
-              state: mediaRecorder.state,
-              mimeType: mediaRecorder.mimeType,
-            },
-          );
-        };
-        mediaRecorder.onerror = (event) => {
-          console.error('[startRecording] ❌ MediaRecorder error', {
-            callId,
-            error: event.error,
-            errorMessage: event.error?.message,
-            state: mediaRecorder?.state,
-          });
-        };
-        mediaRecorder.onstop = () => {
-          console.log('[startRecording] ⏹️ MediaRecorder stopped', {
-            callId,
-            state: mediaRecorder?.state,
-          });
-          if (stopPromiseResolver) {
-            stopPromiseResolver(undefined);
-            stopPromiseResolver = null;
-          }
-        };
-        mediaRecorder.onpause = () => {
-          console.log('[startRecording] ⏸️ MediaRecorder paused', {
-            callId,
-            state: mediaRecorder?.state,
-          });
-        };
-        mediaRecorder.onresume = () => {
-          console.log('[startRecording] ▶️ MediaRecorder resumed', {
-            callId,
-            state: mediaRecorder?.state,
-          });
-        };
-
-        // Start the new recorder with timeslice to get chunks every CHUNK_MS
-        // This is critical for mobile - without timeslice, ondataavailable may not fire
-        mediaRecorder.start(CHUNK_MS);
-        isStoppingForChunk = false;
-        isRestarting = false;
-        console.log(
-          '[startRecording] MediaRecorder restarted (new instance) for next chunk',
-          {
-            callId,
-            chunkIndex,
-            state: mediaRecorder.state,
-            mimeType: mediaRecorder.mimeType,
-            timeslice: CHUNK_MS,
-            isMobile,
-          },
-        );
-      } catch (err) {
-        console.error('[startRecording] Error during restart cycle', {
-          error: err,
-          errorMessage: err.message,
-          stack: err.stack,
-        });
-        // Try to recover by getting a new stream
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-          });
-          currentAudioStream = stream;
-          const options = savedMimeType ? { mimeType: savedMimeType } : {};
-          mediaRecorder = new MediaRecorder(stream, options);
-          mediaRecorder.ondataavailable = handleDataAvailable;
-          mediaRecorder.onstart = () => {
-            console.log('[startRecording] ✅ MediaRecorder recovered', {
-              callId,
-              state: mediaRecorder.state,
-            });
-          };
-          mediaRecorder.onerror = (event) => {
-            console.error('[startRecording] ❌ MediaRecorder error', {
-              callId,
-              error: event.error,
-            });
-          };
-          mediaRecorder.onstop = () => {
-            console.log('[startRecording] ⏹️ MediaRecorder stopped', {
-              callId,
-              state: mediaRecorder?.state,
-            });
-            if (stopPromiseResolver) {
-              stopPromiseResolver(undefined);
-              stopPromiseResolver = null;
-            }
-          };
-          // Start with timeslice for reliable chunking
-          mediaRecorder.start(CHUNK_MS);
-          isStoppingForChunk = false;
-          isRestarting = false;
-          console.log('[startRecording] ✅ MediaRecorder recovered', {
-            callId,
-            state: mediaRecorder.state,
-          });
-        } catch (recoveryErr) {
-          console.error(
-            '[startRecording] Failed to recover MediaRecorder',
-            recoveryErr,
-          );
-          isStoppingForChunk = false;
-          isRestarting = false;
-        }
-      }
-    }
-
-    // Fallback: ensure flags are reset even if something went wrong
-    isStoppingForChunk = false;
-    isRestarting = false;
-  };
-
-  // Start first chunk with timeslice to get chunks every CHUNK_MS
-  // This is critical for mobile - without timeslice, ondataavailable may not fire
-  mediaRecorder.start(CHUNK_MS);
-  console.log('[startRecording] MediaRecorder.start() called (first chunk)', {
-    callId,
-    mimeType: mediaRecorder.mimeType,
+  // Start recording
+  mediaRecorder.start();
+  console.log('[startRecording] ▶️ Recording started', {
+    callId: capturedCallId,
     state: mediaRecorder.state,
-    timeslice: CHUNK_MS,
-    isMobile:
-      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
-        navigator.userAgent,
-      ),
+    duration: `${RECORDING_DURATION_MS / 1000}s`,
   });
 
-  // NOTE: We no longer use setInterval to restart the recorder
-  // Instead, restartRecording() is called automatically after each chunk is uploaded
-  // This is triggered from the ondataavailable handler after successful upload
-  // This avoids race conditions between timeslice events and interval timers
+  // Set timeout to stop recording after 20 seconds
+  recordingTimeoutId = setTimeout(() => {
+    console.log('[startRecording] ⏰ 20 seconds elapsed, stopping recording', {
+      callId: capturedCallId,
+      state: mediaRecorder?.state,
+    });
+
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      mediaRecorder.stop();
+    }
+  }, RECORDING_DURATION_MS);
 
   return mediaRecorder;
 }
 
-export function stopRecording(resetChunkIndex = true) {
-  // Clear any pending restart
-  if (restartTimeoutId) {
-    clearTimeout(restartTimeoutId);
-    restartTimeoutId = null;
-  }
-  isRestarting = false;
+// Old complex data handler code removed - using simplified 20-second recording
 
-  // Clear the interval that restarts MediaRecorder
-  if (chunkIntervalId) {
-    clearInterval(chunkIntervalId);
-    chunkIntervalId = null;
-    console.log('[stopRecording] Cleared chunk interval');
+export function stopRecording(resetChunkIndex = true) {
+  // Clear any pending recording timeout
+  if (recordingTimeoutId) {
+    clearTimeout(recordingTimeoutId);
+    recordingTimeoutId = null;
   }
+
+  console.log('[stopRecording] Stopping recording', {
+    callId: currentCallId,
+    chunkIndex,
+    resetChunkIndex,
+    hasMediaRecorder: !!mediaRecorder,
+    mediaRecorderState: mediaRecorder?.state,
+  });
 
   if (mediaRecorder) {
     const wasRecording = mediaRecorder.state === 'recording';
     const callId = currentCallId;
 
     if (wasRecording) {
-      console.log('[stopRecording] Stopping audio recording', {
+      console.log('[stopRecording] MediaRecorder was recording, stopping...', {
         callId,
         state: mediaRecorder.state,
-        totalChunks: chunkIndex,
-        resetChunkIndex,
       });
-      // Request final chunk before stopping
-      try {
-        mediaRecorder.requestData();
-      } catch (e) {
-        console.warn('[stopRecording] Error requesting final data', e);
-      }
+      // Stop will trigger onstop which handles the upload
       mediaRecorder.stop();
     } else {
       console.log('[stopRecording] MediaRecorder not recording, cleaning up', {
         callId,
         state: mediaRecorder.state,
-        resetChunkIndex,
       });
     }
   }
@@ -1402,6 +741,7 @@ export function stopRecording(resetChunkIndex = true) {
     const preservedCallId = currentCallId;
     currentCallId = null;
     chunkIndex = 0;
+    hasUploadedThisSession = false;
     console.log('[stopRecording] Resetting chunkIndex and clearing callId', {
       resetChunkIndex,
       previousCallId: preservedCallId,
@@ -1416,10 +756,6 @@ export function stopRecording(resetChunkIndex = true) {
       },
     );
   }
-
-  isProcessingChunk = false; // Reset processing flag
-  lastChunkProcessedTime = 0; // Reset timestamp
-  processedChunkIds.clear(); // Clear processed chunk IDs
 
   console.log('[stopRecording] ✅ Recording stopped and cleaned up', {
     resetChunkIndex,
