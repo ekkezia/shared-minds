@@ -310,16 +310,24 @@ export async function startRecording(callId, myPhoneNumber) {
   }
   // Check if this is a restart for the same call (preserve chunkIndex) or a new call (reset chunkIndex)
   // IMPORTANT: Check BEFORE any cleanup to ensure we detect restart correctly
+  // Also check if callId matches (defensive - in case currentCallId was cleared but we're restarting)
   const isRestartForSameCall =
-    currentCallId === callId && currentCallId !== null;
+    (currentCallId === callId && currentCallId !== null) ||
+    (currentCallId === null && chunkIndex > 0); // If chunkIndex > 0 but currentCallId is null, we're likely restarting
 
   console.log('[startRecording] Checking if restart for same call', {
     callId,
     currentCallId,
+    chunkIndex,
     isRestartForSameCall,
-    currentChunkIndex: chunkIndex,
     mediaRecorderExists: !!mediaRecorder,
     mediaRecorderState: mediaRecorder?.state,
+    reasoning:
+      currentCallId === callId
+        ? 'currentCallId matches callId'
+        : chunkIndex > 0 && currentCallId === null
+        ? 'chunkIndex > 0 suggests restart (restoring callId)'
+        : 'new call',
   });
 
   // If already recording for this call, don't restart
@@ -404,14 +412,28 @@ export async function startRecording(callId, myPhoneNumber) {
         },
       );
       // Ensure currentCallId is set (should already be set, but be defensive)
+      // This handles the case where currentCallId was cleared but chunkIndex > 0 indicates we're restarting
       if (!currentCallId) {
         console.warn(
           '[startRecording] ⚠️ currentCallId was null but isRestartForSameCall is true - restoring',
           {
             callId,
+            chunkIndex,
           },
         );
         currentCallId = callId;
+      }
+
+      // Also ensure chunkIndex is preserved (defensive check)
+      if (chunkIndex === 0 && isRestartForSameCall) {
+        console.warn(
+          '[startRecording] ⚠️ chunkIndex is 0 but isRestartForSameCall is true - this might be wrong',
+          {
+            callId,
+            currentCallId,
+            chunkIndex,
+          },
+        );
       }
     }
   }
@@ -424,6 +446,9 @@ export async function startRecording(callId, myPhoneNumber) {
   isRestarting = false;
 
   // Set currentCallId (should already be set if restarting, but ensure it's set)
+  // CRITICAL: Always set currentCallId to callId, even if restarting
+  // This ensures it's set correctly even if it was somehow cleared
+  const previousCallId = currentCallId;
   currentCallId = callId;
 
   // Only reset chunkIndex if this is a NEW call, not a restart for the same call
@@ -432,14 +457,17 @@ export async function startRecording(callId, myPhoneNumber) {
     chunkIndex = 0;
     console.log('[startRecording] New call - resetting chunkIndex to 0', {
       callId,
+      previousCallId,
     });
   } else {
     console.log(
       '[startRecording] Restarting for same call - preserving chunkIndex',
       {
         callId,
+        previousCallId,
         preservedChunkIndex: chunkIndex,
         willContinueFrom: chunkIndex,
+        nextChunkWillBe: chunkIndex, // Next chunk will use this index
       },
     );
   }
@@ -771,26 +799,48 @@ export async function startRecording(callId, myPhoneNumber) {
           isMobile,
         });
 
-        const insertResult = await insertAudioChunkRow({
-          call_id: callId,
-          from_number: myPhoneNumber,
-          url: publicUrl,
-          file_path: filePath,
-        });
-
-        console.log(
-          '[startRecording] ✅ Chunk successfully uploaded and saved',
-          {
-            callId,
-            chunkNumber: chunkNum,
-            publicUrl,
-            filePath,
-            blobSize: blob.size,
-            timestamp: new Date().toISOString(),
-            isMobile,
-            insertResult,
-          },
-        );
+        let insertResult;
+        try {
+          insertResult = await insertAudioChunkRow({
+            call_id: callId,
+            from_number: myPhoneNumber,
+            url: publicUrl,
+            file_path: filePath,
+          });
+          console.log(
+            '[startRecording] ✅ Chunk successfully uploaded and saved to database',
+            {
+              callId,
+              chunkNumber: chunkNum,
+              paddedChunkNum,
+              from_number: myPhoneNumber,
+              publicUrl,
+              filePath,
+              blobSize: blob.size,
+              timestamp: new Date().toISOString(),
+              isMobile,
+              insertResult,
+            },
+          );
+        } catch (insertErr) {
+          console.error(
+            '[startRecording] ❌ Failed to insert chunk into database',
+            {
+              callId,
+              chunkNumber: chunkNum,
+              paddedChunkNum,
+              from_number: myPhoneNumber,
+              publicUrl,
+              filePath,
+              error: insertErr,
+              errorMessage: insertErr?.message,
+            },
+          );
+          // Don't increment chunkIndex if insert failed - this will cause a gap
+          // but prevents incorrect numbering
+          isProcessingChunk = false;
+          return; // Exit early - don't continue processing this chunk
+        }
 
         // CRITICAL: Only increment chunkIndex AFTER successful upload
         // This ensures no gaps in chunk numbering
@@ -1584,11 +1634,14 @@ export async function fetchAudioChunksFromOppositeParty(
       );
     }
 
-    const { data, error } = await supabase
+    // Fetch ALL chunks for this call, then filter client-side
+    // This is more reliable than server-side filtering and ensures we don't miss any chunks
+    const oppositeNorm = normalize(oppositeNumber);
+
+    const { data: allChunks, error } = await supabase
       .from('audio_chunks')
       .select('*')
       .eq('call_id', callId)
-      .eq('from_number', oppositeNumber)
       .order('created_at', { ascending: true });
 
     if (error) {
@@ -1602,14 +1655,78 @@ export async function fetchAudioChunksFromOppositeParty(
       );
     }
 
+    // Filter by opposite party's phone number (client-side for reliability)
+    const filtered = (allChunks || []).filter((chunk) => {
+      const chunkFromNorm = normalize(chunk.from_number || '');
+      return chunkFromNorm === oppositeNorm;
+    });
+
+    console.log(
+      `[fetchAudioChunksFromOppositeParty] Found ${
+        filtered.length
+      } chunks from opposite party (out of ${
+        allChunks?.length || 0
+      } total chunks for call)`,
+      {
+        callId,
+        oppositeNumber,
+        oppositeNorm,
+        allChunksCount: allChunks?.length || 0,
+        filteredCount: filtered.length,
+        allChunkFromNumbers: allChunks?.map((c) => c.from_number) || [],
+        filteredChunkIds: filtered.map((c) => c.id) || [],
+      },
+    );
+
+    const data = filtered;
+
+    // Log detailed information about fetched chunks
     console.log(
       `[fetchAudioChunksFromOppositeParty] Found ${
         data?.length || 0
       } historical chunks from database`,
-      { callId, oppositeNumber },
+      {
+        callId,
+        oppositeNumber,
+        oppositeNorm,
+        chunkIds: data?.map((c) => c.id) || [],
+        chunkFromNumbers: data?.map((c) => c.from_number) || [],
+        chunkCreatedAts: data?.map((c) => c.created_at) || [],
+        chunkUrls: data?.map((c) => c.url) || [],
+      },
     );
 
-    return data || [];
+    // Verify all chunks have required fields
+    const validChunks = (data || []).filter((chunk) => {
+      const isValid = chunk && chunk.id && chunk.url && chunk.from_number;
+      if (!isValid) {
+        console.warn(
+          '[fetchAudioChunksFromOppositeParty] ⚠️ Invalid chunk found, filtering out',
+          {
+            chunk,
+            hasId: !!chunk?.id,
+            hasUrl: !!chunk?.url,
+            hasFromNumber: !!chunk?.from_number,
+          },
+        );
+      }
+      return isValid;
+    });
+
+    if (validChunks.length !== (data?.length || 0)) {
+      console.warn(
+        `[fetchAudioChunksFromOppositeParty] Filtered out ${
+          (data?.length || 0) - validChunks.length
+        } invalid chunks`,
+        {
+          callId,
+          originalCount: data?.length || 0,
+          validCount: validChunks.length,
+        },
+      );
+    }
+
+    return validChunks;
   } catch (err) {
     console.warn('[fetchAudioChunksFromOppositeParty] Failed', err);
     return [];

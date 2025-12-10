@@ -7,7 +7,7 @@ export default function IncomingCallView({ call, onAccept, onReject }) {
   const gainNodeRef = useRef(null);
   const ringIntervalRef = useRef(null);
 
-  // Generate and play ringing sound
+  // Generate and play ringing sound - plays immediately when view appears
   useEffect(() => {
     // Create audio context if not exists
     if (!audioContextRef.current) {
@@ -22,17 +22,37 @@ export default function IncomingCallView({ call, onAccept, onReject }) {
     const audioContext = audioContextRef.current;
     
     // Resume audio context if suspended (browsers require user interaction)
-    if (audioContext.state === 'suspended') {
-      audioContext.resume().catch((e) => {
-        console.warn('[IncomingCallView] Could not resume audio context', e);
-      });
-    }
+    // This is critical - audio context starts suspended in many browsers
+    const resumeAudio = async () => {
+      if (audioContext.state === 'suspended') {
+        try {
+          await audioContext.resume();
+          console.log('[IncomingCallView] Audio context resumed');
+        } catch (e) {
+          console.warn('[IncomingCallView] Could not resume audio context', e);
+        }
+      }
+    };
+    
+    // Try to resume immediately
+    resumeAudio();
 
     let isPlaying = false;
 
     // Function to play a single ring tone (two alternating frequencies like a real phone)
-    const playRingTone = () => {
+    const playRingTone = async () => {
       if (isPlaying) return;
+      
+      // Ensure audio context is resumed before playing
+      if (audioContext.state === 'suspended') {
+        try {
+          await audioContext.resume();
+        } catch (e) {
+          console.warn('[IncomingCallView] Could not resume audio context for ring tone', e);
+          return;
+        }
+      }
+      
       isPlaying = true;
 
       try {
@@ -82,7 +102,9 @@ export default function IncomingCallView({ call, onAccept, onReject }) {
       }
     };
 
-    // Play ring tone immediately, then repeat every 2 seconds (typical phone ring pattern)
+    // Play ring tone immediately when view appears, then repeat every 2 seconds
+    // This happens as soon as IncomingCallView mounts, NOT when accept button is clicked
+    console.log('[IncomingCallView] Starting ring tone - view just appeared');
     playRingTone();
     ringIntervalRef.current = setInterval(() => {
       playRingTone();
