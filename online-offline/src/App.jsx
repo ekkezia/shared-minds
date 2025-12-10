@@ -1793,6 +1793,33 @@ export default function App() {
         if (currentCall && currentCall.id && myPhoneNumber) {
           // Reset the first chunk of current session - we'll track it when first chunk arrives
           firstChunkOfCurrentSessionRef.current = null;
+
+          // CRITICAL FIX: Re-set the upload progress callback BEFORE restarting recording
+          // This was missing, causing "Waiting for first upload..." on 2nd+ online sessions
+          const callIdForCallback = currentCall.id;
+          setUploadProgressCallback(
+            ({ callId: uploadedCallId, path, publicUrl, error, failed }) => {
+              if (uploadedCallId === callIdForCallback) {
+                if (failed) {
+                  console.warn('[connectivity effect] ⚠️ Chunk upload failed', {
+                    callId: uploadedCallId,
+                    error,
+                  });
+                } else {
+                  setUploadedChunksCount((prev) => prev + 1);
+                  console.log(
+                    '[connectivity effect] ✅ Chunk uploaded (restart)',
+                    {
+                      callId: uploadedCallId,
+                      path,
+                      publicUrl,
+                    },
+                  );
+                }
+              }
+            },
+          );
+
           // Wait a bit to ensure any previous stopRecording has completed
           setTimeout(() => {
             console.log(
