@@ -198,6 +198,7 @@ export default function App() {
     }
   };
   const [uploadedChunksCount, setUploadedChunksCount] = useState(0); // Track number of chunks uploaded
+  const [uploadStatus, setUploadStatus] = useState(null); // { success: boolean, error?: string }
   const [incomingCallPayload, setIncomingCallPayload] = useState(null);
   const audioPlayerRef = useRef(null);
   const playedChunkIdsRef = useRef(new Set());
@@ -1805,8 +1806,13 @@ export default function App() {
                     callId: uploadedCallId,
                     error,
                   });
+                  setUploadStatus({
+                    success: false,
+                    error: error || 'Upload failed',
+                  });
                 } else {
                   setUploadedChunksCount((prev) => prev + 1);
+                  setUploadStatus({ success: true });
                   console.log(
                     '[connectivity effect] ✅ Chunk uploaded (restart)',
                     {
@@ -1819,6 +1825,9 @@ export default function App() {
               }
             },
           );
+
+          // Reset upload status for new recording session
+          setUploadStatus(null);
 
           // Wait a bit to ensure any previous stopRecording has completed
           setTimeout(() => {
@@ -2417,7 +2426,10 @@ export default function App() {
               callId: uploadedCallId,
               error,
             });
-            // Don't increment counter on failure
+            setUploadStatus({
+              success: false,
+              error: error || 'Upload failed',
+            });
           } else {
             setUploadedChunksCount((prev) => {
               const newCount = prev + 1;
@@ -2429,6 +2441,7 @@ export default function App() {
               });
               return newCount;
             });
+            setUploadStatus({ success: true });
           }
         } else {
           console.warn('[handleStartCall] ⚠️ Callback for different call ID', {
@@ -2439,8 +2452,9 @@ export default function App() {
       },
     );
 
-    // Reset chunk counter
+    // Reset chunk counter and upload status
     setUploadedChunksCount(0);
+    setUploadStatus(null);
 
     // Track state: starting recording
     myStateHistoryRef.current.push({
@@ -2705,23 +2719,37 @@ export default function App() {
         isOnline,
         view: 'calling',
       });
-      // Set up upload progress callback
+      // Set up upload progress callback (handles both success and failure)
       setUploadProgressCallback(
-        ({ callId: uploadedCallId, path, publicUrl }) => {
+        ({ callId: uploadedCallId, path, publicUrl, failed, error }) => {
           if (uploadedCallId === callRow.id) {
-            setUploadedChunksCount((prev) => prev + 1);
-            console.log('[handleAccept] ✅ Chunk uploaded', {
-              callId: uploadedCallId,
-              path,
-              publicUrl,
-              totalChunks: uploadedChunksCount + 1,
-            });
+            if (failed) {
+              console.log('[handleAccept] ❌ Chunk upload failed', {
+                callId: uploadedCallId,
+                path,
+                error,
+              });
+              setUploadStatus({
+                success: false,
+                error: error || 'Upload failed',
+              });
+            } else {
+              setUploadedChunksCount((prev) => prev + 1);
+              setUploadStatus({ success: true });
+              console.log('[handleAccept] ✅ Chunk uploaded', {
+                callId: uploadedCallId,
+                path,
+                publicUrl,
+                totalChunks: uploadedChunksCount + 1,
+              });
+            }
           }
         },
       );
 
-      // Reset chunk counter
+      // Reset chunk counter and upload status
       setUploadedChunksCount(0);
+      setUploadStatus(null);
 
       // Track state: starting recording (accepting call)
       myStateHistoryRef.current.push({
@@ -2902,6 +2930,7 @@ export default function App() {
           onEnd={handleEnd}
           audioStream={getCurrentAudioStream()}
           uploadedChunksCount={uploadedChunksCount}
+          uploadStatus={uploadStatus}
           myPhoneNumber={myPhoneNumber}
           myUsername={myUsername}
         />

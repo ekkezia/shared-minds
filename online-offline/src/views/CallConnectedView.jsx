@@ -191,13 +191,16 @@ export default function CallConnectedView({
               }}
             >
               {playbackChunks.map((chunk, index) => {
-                const isPlaying = chunk.id === currentPlayingChunkId;
+                const isPlayingChunk = chunk.id === currentPlayingChunkId;
                 const currentIndex = currentPlayingChunkId
                   ? playbackChunks.findIndex(
                       (c) => c.id === currentPlayingChunkId,
                     )
                   : -1;
                 const isPlayed = currentIndex > index;
+                // Check if chunk failed to upload (has failed flag or no URL)
+                const isFailed =
+                  chunk.failed === true || (!chunk.url && !chunk.publicUrl);
 
                 return (
                   <div
@@ -207,13 +210,17 @@ export default function CallConnectedView({
                       left: `${index * 80}px`, // Fixed 80px per chunk
                       width: '75px', // Fixed width
                       height: '100%',
-                      backgroundColor: isPlaying
+                      backgroundColor: isFailed
+                        ? '#ff3b30' // Red for failed chunks
+                        : isPlayingChunk
                         ? '#34c759'
                         : isPlayed
                         ? '#007AFF'
                         : 'rgba(255, 255, 255, 0.2)',
-                      border: isPlaying
+                      border: isPlayingChunk
                         ? '2px solid #fff'
+                        : isFailed
+                        ? '2px solid #ff6b6b'
                         : '1px solid rgba(255, 255, 255, 0.3)',
                       borderRadius: '2px',
                       display: 'flex',
@@ -221,16 +228,17 @@ export default function CallConnectedView({
                       justifyContent: 'center',
                       fontSize: '10px',
                       color: '#fff',
-                      fontWeight: isPlaying ? 'bold' : 'normal',
+                      fontWeight: isPlayingChunk ? 'bold' : 'normal',
                       transition: 'background-color 0.2s',
                       boxSizing: 'border-box',
                       marginRight: '5px',
+                      opacity: isFailed ? 0.7 : 1,
                     }}
                     title={`Chunk ${index + 1}/${playbackChunks.length}${
-                      isPlaying ? ' (Playing)' : ''
-                    } - ${chunk.id || 'no-id'}`}
+                      isPlayingChunk ? ' (Playing)' : ''
+                    }${isFailed ? ' (FAILED)' : ''} - ${chunk.id || 'no-id'}`}
                   >
-                    {index + 1}
+                    {isFailed ? '✗' : index + 1}
                   </div>
                 );
               })}

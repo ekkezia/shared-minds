@@ -132,37 +132,45 @@ function Visualizer({ mode = 'recording', audioStream = null }) {
   );
 }
 
+// Recording duration constant (must match audioService.js)
+const RECORDING_DURATION_SECONDS = 20;
+
 export default function CallingView({
   call,
   isOnline,
   onEnd,
   audioStream,
   uploadedChunksCount = 0,
+  uploadStatus = null, // { success: boolean, error?: string }
   myPhoneNumber = '',
   myUsername = '',
 }) {
-  const [elapsedTime, setElapsedTime] = useState(0);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [recordingStartTime, setRecordingStartTime] = useState(null);
 
+  // Track recording time (countdown from 20 seconds)
   useEffect(() => {
-    // Calculate elapsed time from call start
-    const startTime = call.created_at
-      ? new Date(call.created_at).getTime()
-      : Date.now();
+    if (!isOnline) {
+      setRecordingTime(0);
+      setRecordingStartTime(null);
+      return;
+    }
+
+    // Start fresh recording timer when coming online
+    const startTime = Date.now();
+    setRecordingStartTime(startTime);
+    setRecordingTime(0);
 
     const updateTimer = () => {
-      const now = Date.now();
-      const elapsed = Math.floor((now - startTime) / 1000); // elapsed seconds
-      setElapsedTime(elapsed);
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      setRecordingTime(Math.min(elapsed, RECORDING_DURATION_SECONDS));
     };
 
-    // Update immediately
     updateTimer();
-
-    // Update every second
-    const interval = setInterval(updateTimer, 1000);
+    const interval = setInterval(updateTimer, 100); // Update frequently for smooth countdown
 
     return () => clearInterval(interval);
-  }, [call.created_at]);
+  }, [isOnline]);
 
   // Format time as MM:SS
   const formatTime = (seconds) => {
@@ -171,18 +179,18 @@ export default function CallingView({
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
+  // Calculate remaining time
+  const remainingTime = RECORDING_DURATION_SECONDS - recordingTime;
+  const isRecordingComplete = recordingTime >= RECORDING_DURATION_SECONDS;
+  const progressPercent = (recordingTime / RECORDING_DURATION_SECONDS) * 100;
+
   // Determine if current user is the caller or recipient
   const normalizeNumber = normalizePhoneNumber;
   const myNorm = normalizeNumber(myPhoneNumber);
   const fromNorm = normalizeNumber(call.from_number || '');
   const toNorm = normalizeNumber(call.to_number || '');
-  const isCaller = fromNorm === myNorm; // Current user initiated the call
-  const isRecipient = toNorm === myNorm; // Current user is being called
-
-  // Get the other party's username
-  const otherPartyUsername = isCaller
-    ? call.to_username || call.to_number || 'Unknown'
-    : call.from_username || call.from_number || 'Unknown';
+  const isCaller = fromNorm === myNorm;
+  const isRecipient = toNorm === myNorm;
 
   return (
     <div class='screen dialer-screen'>
@@ -193,7 +201,7 @@ export default function CallingView({
             style={{
               marginTop: '4px',
               fontSize: '14px',
-              colro: 'white',
+              color: 'white',
             }}
           >
             <span style={{ color: 'rgba(255, 255, 255, 0.5)' }}>calling </span>
@@ -212,39 +220,77 @@ export default function CallingView({
           </div>
         )}
         <div class='caller-number'>{call.other_number}</div>
-        <div class='call-status'>
-          {isOnline ? 'Recording your voice...' : 'Playing their voice...'}
-        </div>
+
+        {/* Recording Status */}
         {isOnline && (
-          <>
+          <div style={{ marginTop: '16px', width: '100%', maxWidth: '280px' }}>
+            {/* Status Text */}
             <div
               style={{
-                marginTop: '8px',
-                fontSize: '18px',
-                fontWeight: '600',
-                color: '#34c759',
-                letterSpacing: '1px',
-              }}
-            >
-              {formatTime(elapsedTime)}
-            </div>
-            <div
-              style={{
-                marginTop: '4px',
                 fontSize: '14px',
                 fontWeight: '500',
-                color: uploadedChunksCount > 0 ? '#34c759' : '#ffcc00',
-                letterSpacing: '0.5px',
+                color: isRecordingComplete
+                  ? uploadStatus?.success
+                    ? '#34c759'
+                    : uploadStatus?.success === false
+                    ? '#ff3b30'
+                    : '#ffcc00'
+                  : '#34c759',
+                marginBottom: '8px',
               }}
             >
-              {uploadedChunksCount > 0
-                ? `✅ ${uploadedChunksCount} chunk${
-                    uploadedChunksCount !== 1 ? 's' : ''
-                  } uploaded`
-                : '⏳ Waiting for first upload...'}
+              {isRecordingComplete
+                ? uploadStatus?.success
+                  ? '✅ Recording uploaded!'
+                  : uploadStatus?.success === false
+                  ? `❌ Upload failed: ${uploadStatus.error || 'Unknown error'}`
+                  : '⏳ Uploading...'
+                : `🎤 Recording... ${formatTime(remainingTime)} remaining`}
             </div>
-          </>
+
+            {/* Progress Bar */}
+            <div
+              style={{
+                width: '100%',
+                height: '8px',
+                backgroundColor: 'rgba(255, 255, 255, 0.2)',
+                borderRadius: '4px',
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  width: `${progressPercent}%`,
+                  height: '100%',
+                  backgroundColor: isRecordingComplete
+                    ? uploadStatus?.success
+                      ? '#34c759'
+                      : uploadStatus?.success === false
+                      ? '#ff3b30'
+                      : '#ffcc00'
+                    : '#34c759',
+                  borderRadius: '4px',
+                  transition: 'width 0.1s linear',
+                }}
+              />
+            </div>
+
+            {/* Chunk Count */}
+            {uploadedChunksCount > 0 && (
+              <div
+                style={{
+                  marginTop: '8px',
+                  fontSize: '12px',
+                  color: 'rgba(255, 255, 255, 0.7)',
+                }}
+              >
+                Total chunks this call: {uploadedChunksCount}
+              </div>
+            )}
+          </div>
         )}
+
+        {!isOnline && <div class='call-status'>Playing their voice...</div>}
       </div>
 
       <Visualizer
