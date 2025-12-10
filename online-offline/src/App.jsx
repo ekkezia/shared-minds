@@ -52,25 +52,83 @@ import useOnlineStatus from './hooks/useOnlineStatus.js';
 const uid = () => Math.random().toString(36).slice(2, 10);
 
 // Fullscreen prompt component
+// Detect if running on iOS
+const isIOS = () => {
+  return (
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  );
+};
+
+// Detect if running on mobile
+const isMobile = () => {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+    navigator.userAgent,
+  );
+};
+
 function FullscreenPrompt({ onEnterFullscreen, onDismiss }) {
+  const mobile = isMobile();
+  const ios = isIOS();
+
   const handleFullscreen = async () => {
     try {
       const elem = document.documentElement;
-      // @ts-ignore - vendor prefixed fullscreen methods
+      // @ts-ignore - vendor prefixed fullscreen methods exist on some browsers
       const requestFS =
         elem.requestFullscreen ||
-        elem.webkitRequestFullscreen ||
-        elem.msRequestFullscreen;
+        // @ts-ignore
+        elem['webkitRequestFullscreen'] ||
+        // @ts-ignore
+        elem['msRequestFullscreen'];
       if (requestFS) {
         await requestFS.call(elem);
+        onEnterFullscreen();
+      } else {
+        // Fullscreen API not available (iOS Safari)
+        // Just dismiss and let user know how to do it manually
+        onDismiss();
       }
-      onEnterFullscreen();
     } catch (err) {
       console.warn('Fullscreen request failed:', err);
       // Still dismiss the prompt even if fullscreen fails
       onDismiss();
     }
   };
+
+  // For iOS, show instructions to add to home screen instead
+  const iosInstructions = ios && (
+    <div
+      style={{
+        marginTop: '16px',
+        padding: '12px',
+        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+        borderRadius: '8px',
+        fontSize: '12px',
+        color: 'rgba(255, 255, 255, 0.6)',
+        lineHeight: '1.4',
+      }}
+    >
+      <strong style={{ color: 'rgba(255, 255, 255, 0.8)' }}>iOS Tip:</strong>{' '}
+      For true fullscreen, tap{' '}
+      <span style={{ fontSize: '14px' }}>
+        <svg
+          width='14'
+          height='14'
+          viewBox='0 0 24 24'
+          fill='none'
+          stroke='currentColor'
+          strokeWidth='2'
+          style={{ verticalAlign: 'middle', marginBottom: '2px' }}
+        >
+          <path d='M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8' />
+          <polyline points='16 6 12 2 8 6' />
+          <line x1='12' y1='2' x2='12' y2='15' />
+        </svg>
+      </span>{' '}
+      then "Add to Home Screen"
+    </div>
+  );
 
   return (
     <div
@@ -121,7 +179,7 @@ function FullscreenPrompt({ onEnterFullscreen, onDismiss }) {
             margin: '0 0 12px 0',
           }}
         >
-          Best Experience in Fullscreen
+          {ios ? 'Best on Home Screen' : 'Best Experience in Fullscreen'}
         </h2>
 
         <p
@@ -133,40 +191,45 @@ function FullscreenPrompt({ onEnterFullscreen, onDismiss }) {
             margin: '0 0 24px 0',
           }}
         >
-          For the most immersive phone call experience, we recommend using
-          fullscreen mode.
+          {ios
+            ? 'Add this app to your home screen for the best phone call experience.'
+            : 'For the most immersive phone call experience, we recommend using fullscreen mode.'}
         </p>
 
-        <button
-          onClick={handleFullscreen}
-          style={{
-            width: '100%',
-            padding: '14px 20px',
-            fontSize: '16px',
-            fontWeight: '600',
-            color: '#fff',
-            backgroundColor: '#34C759',
-            border: 'none',
-            borderRadius: '12px',
-            cursor: 'pointer',
-            marginBottom: '12px',
-            transition: 'transform 0.1s, opacity 0.1s',
-          }}
-          onMouseDown={(e) => {
-            /** @type {HTMLButtonElement} */ (e.target).style.transform =
-              'scale(0.98)';
-          }}
-          onMouseUp={(e) => {
-            /** @type {HTMLButtonElement} */ (e.target).style.transform =
-              'scale(1)';
-          }}
-          onMouseLeave={(e) => {
-            /** @type {HTMLButtonElement} */ (e.target).style.transform =
-              'scale(1)';
-          }}
-        >
-          Enter Fullscreen
-        </button>
+        {!ios && (
+          <button
+            onClick={handleFullscreen}
+            style={{
+              width: '100%',
+              padding: '14px 20px',
+              fontSize: '16px',
+              fontWeight: '600',
+              color: '#fff',
+              backgroundColor: '#34C759',
+              border: 'none',
+              borderRadius: '12px',
+              cursor: 'pointer',
+              marginBottom: '12px',
+              transition: 'transform 0.1s, opacity 0.1s',
+            }}
+            onMouseDown={(e) => {
+              /** @type {HTMLButtonElement} */ (e.target).style.transform =
+                'scale(0.98)';
+            }}
+            onMouseUp={(e) => {
+              /** @type {HTMLButtonElement} */ (e.target).style.transform =
+                'scale(1)';
+            }}
+            onMouseLeave={(e) => {
+              /** @type {HTMLButtonElement} */ (e.target).style.transform =
+                'scale(1)';
+            }}
+          >
+            Enter Fullscreen
+          </button>
+        )}
+
+        {iosInstructions}
 
         <button
           onClick={onDismiss}
@@ -180,6 +243,7 @@ function FullscreenPrompt({ onEnterFullscreen, onDismiss }) {
             border: '1px solid rgba(255, 255, 255, 0.2)',
             borderRadius: '12px',
             cursor: 'pointer',
+            marginTop: ios ? '16px' : '0',
             transition: 'opacity 0.1s',
           }}
         >
@@ -708,38 +772,32 @@ export default function App() {
     restoreCallState();
   }, [myPhoneNumber, isOnline]); // Run when phone number is set and connectivity changes
 
-  // Call duration timer - starts when call becomes active, persists across view changes
+  // Call duration timer - starts when user enters calling/connected view (independent per user)
+  // Each user's timer starts when THEY join the call, not when the other user joins
   useEffect(() => {
-    const callStatus = String(currentCall?.status || '').toLowerCase();
     const callId = currentCall?.id;
-    const acceptedAt = currentCall?.accepted_at;
+    const isInCall = view === 'calling' || view === 'connected';
 
     console.log('[App] ⏱️ Timer effect running', {
-      callStatus,
+      view,
       callId,
-      acceptedAt,
+      isInCall,
       hasStartTimeRef: !!callStartTimeRef.current,
       hasTimerInterval: !!callTimerIntervalRef.current,
     });
 
-    if (callStatus === 'active' && callId) {
-      // Call is active - start or continue the timer
+    if (isInCall && callId) {
+      // User is in a call view - start or continue the timer
       if (!callStartTimeRef.current) {
-        // Timer not started yet - start it now
-        const startTime = acceptedAt
-          ? new Date(acceptedAt).getTime()
-          : Date.now();
+        // Timer not started yet - start it NOW (when user joins)
+        const startTime = Date.now();
         callStartTimeRef.current = startTime;
+        setCallDuration(0);
 
-        // Calculate initial duration (in case we're restoring state)
-        const initialDuration = Math.floor((Date.now() - startTime) / 1000);
-        setCallDuration(Math.max(0, initialDuration));
-
-        console.log('[App] ⏱️ Call timer STARTED', {
+        console.log('[App] ⏱️ Call timer STARTED (user joined call)', {
           callId,
+          view,
           startTime: new Date(startTime).toISOString(),
-          initialDuration,
-          acceptedAt,
         });
       }
 
@@ -755,12 +813,12 @@ export default function App() {
         }, 1000);
         console.log('[App] ⏱️ Timer interval started');
       }
-    } else if (callStatus !== 'active' || !callId) {
-      // Call not active or no call - stop the timer
+    } else if (!isInCall) {
+      // User left the call view - stop the timer
       if (callTimerIntervalRef.current) {
-        console.log('[App] ⏱️ Call timer STOPPED', {
+        console.log('[App] ⏱️ Call timer STOPPED (user left call)', {
           callId,
-          callStatus,
+          view,
           finalDuration: callDuration,
         });
         clearInterval(callTimerIntervalRef.current);
@@ -771,16 +829,14 @@ export default function App() {
         // No call at all - reset everything
         callStartTimeRef.current = null;
         setCallDuration(0);
-      } else {
-        // Call exists but not active (ended/rejected) - keep duration but clear start time
-        callStartTimeRef.current = null;
       }
+      // Keep callStartTimeRef if there's still a call (for EndCallView to show final duration)
     }
 
     return () => {
       // Cleanup on unmount only - don't clear on re-render
     };
-  }, [currentCall?.status, currentCall?.id, currentCall?.accepted_at]);
+  }, [view, currentCall?.id]);
 
   // Cleanup timer on component unmount
   useEffect(() => {
@@ -2801,6 +2857,14 @@ export default function App() {
     // Clear any previous call ID reference before creating new call
     lastCreatedCallIdRef.current = null;
 
+    // Reset timer for new call
+    if (callTimerIntervalRef.current) {
+      clearInterval(callTimerIntervalRef.current);
+      callTimerIntervalRef.current = null;
+    }
+    callStartTimeRef.current = null;
+    setCallDuration(0);
+
     // Reset state histories for new call
     setMyStateHistory([]);
     setOtherStateHistory([]);
@@ -3163,6 +3227,14 @@ export default function App() {
   const handleAccept = async (callRow) => {
     if (!callRow) callRow = currentCall;
     if (!callRow) return;
+
+    // Reset timer for this user (their timer starts when THEY accept)
+    if (callTimerIntervalRef.current) {
+      clearInterval(callTimerIntervalRef.current);
+      callTimerIntervalRef.current = null;
+    }
+    callStartTimeRef.current = null;
+    setCallDuration(0);
 
     // Update DB status to active + accepted_at (audioService.acceptCall handles the DB update)
     const acceptedAt = new Date().toISOString();
