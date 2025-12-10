@@ -480,9 +480,8 @@ export async function startRecording(callId, myPhoneNumber) {
     }
 
     // Combine all chunks into one blob
-    const blob = new Blob(audioChunks, {
-      type: mediaRecorder?.mimeType || 'audio/webm',
-    });
+    const mimeTypeToUse = mediaRecorder?.mimeType || 'audio/webm';
+    const blob = new Blob(audioChunks, { type: mimeTypeToUse });
     console.log('[startRecording] 🎤 Combined audio blob', {
       callId,
       blobSize: blob.size,
@@ -494,35 +493,67 @@ export async function startRecording(callId, myPhoneNumber) {
     const paddedChunkNum = String(chunkIndex).padStart(3, '0');
     const path = `call-${callId}/${myPhoneNumber}/${paddedChunkNum}.webm`;
 
-    // Mark as uploading
-    hasUploadedThisSession = true;
+    // Notify UI that upload is starting
+    if (onUploadProgress) {
+      onUploadProgress({
+        callId,
+        chunkIndex,
+        uploading: true,
+        failed: false,
+      });
+    }
+
+    // Create upload with timeout (15 seconds max)
+    const UPLOAD_TIMEOUT_MS = 15000;
+    let uploadTimedOut = false;
+
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        uploadTimedOut = true;
+        reject(new Error('Upload timed out after 15 seconds'));
+      }, UPLOAD_TIMEOUT_MS);
+    });
 
     try {
       console.log('[startRecording] ⬆️ Uploading audio...', {
         callId,
         path,
         blobSize: blob.size,
+        timeout: `${UPLOAD_TIMEOUT_MS / 1000}s`,
       });
 
-      const { publicUrl, path: filePath } = await uploadToStorage(
-        'call-audio',
-        path,
-        blob,
-      );
+      // Race between upload and timeout
+      const uploadPromise = (async () => {
+        const { publicUrl, path: filePath } = await uploadToStorage(
+          'call-audio',
+          path,
+          blob,
+        );
 
-      console.log('[startRecording] ✅ Audio uploaded to storage', {
-        callId,
-        publicUrl,
-        filePath,
-      });
+        console.log('[startRecording] ✅ Audio uploaded to storage', {
+          callId,
+          publicUrl,
+          filePath,
+        });
 
-      // Insert into database
-      await insertAudioChunkRow({
-        call_id: callId,
-        from_number: myPhoneNumber,
-        url: publicUrl,
-        file_path: filePath,
-      });
+        // Insert into database
+        await insertAudioChunkRow({
+          call_id: callId,
+          from_number: myPhoneNumber,
+          url: publicUrl,
+          file_path: filePath,
+        });
+
+        return { publicUrl, filePath };
+      })();
+
+      const { publicUrl, filePath } = await Promise.race([
+        uploadPromise,
+        timeoutPromise,
+      ]);
+
+      // Mark as uploaded ONLY after successful upload
+      hasUploadedThisSession = true;
 
       console.log('[startRecording] ✅ Audio chunk saved to database', {
         callId,
@@ -554,12 +585,18 @@ export async function startRecording(callId, myPhoneNumber) {
         uploadedChunkIndex: chunkIndex - 1,
       });
     } catch (err) {
+      const isTimeout = err?.message?.includes('timed out');
       console.error('[startRecording] ❌ Upload failed', {
         callId,
         chunkIndex,
         error: err,
         errorMessage: err?.message,
+        isTimeout,
+        uploadTimedOut,
       });
+
+      // DON'T mark as uploaded on failure - allow retry on next online period
+      // hasUploadedThisSession stays false
 
       // Notify UI of failure - chunk will be shown in red
       if (onUploadProgress) {
@@ -568,12 +605,19 @@ export async function startRecording(callId, myPhoneNumber) {
           chunkIndex,
           path,
           failed: true,
-          error: err?.message || 'Upload failed',
+          error: isTimeout
+            ? 'Upload timed out - network too slow'
+            : err?.message || 'Upload failed',
         });
       }
 
-      // Still increment chunk index so next session gets a new number
-      chunkIndex += 1;
+      // DON'T increment chunk index on failure - retry with same index
+      // This way the next online session will try to upload the same chunk number
+      console.log('[startRecording] ⚠️ Keeping chunkIndex for retry', {
+        callId,
+        chunkIndex,
+        reason: 'Upload failed, will retry on next online period',
+      });
     }
   };
 

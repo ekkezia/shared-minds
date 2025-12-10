@@ -1799,20 +1799,45 @@ export default function App() {
           // This was missing, causing "Waiting for first upload..." on 2nd+ online sessions
           const callIdForCallback = currentCall.id;
           setUploadProgressCallback(
-            ({ callId: uploadedCallId, path, publicUrl, error, failed }) => {
+            ({
+              callId: uploadedCallId,
+              path,
+              publicUrl,
+              error,
+              failed,
+              uploading,
+            }) => {
               if (uploadedCallId === callIdForCallback) {
-                if (failed) {
+                if (uploading) {
+                  console.log(
+                    '[connectivity effect] ⏳ Upload started (restart)',
+                    {
+                      callId: uploadedCallId,
+                    },
+                  );
+                  setUploadStatus({
+                    uploading: true,
+                    success: false,
+                    failed: false,
+                  });
+                } else if (failed) {
                   console.warn('[connectivity effect] ⚠️ Chunk upload failed', {
                     callId: uploadedCallId,
                     error,
                   });
                   setUploadStatus({
                     success: false,
+                    failed: true,
+                    uploading: false,
                     error: error || 'Upload failed',
                   });
                 } else {
                   setUploadedChunksCount((prev) => prev + 1);
-                  setUploadStatus({ success: true });
+                  setUploadStatus({
+                    success: true,
+                    failed: false,
+                    uploading: false,
+                  });
                   console.log(
                     '[connectivity effect] ✅ Chunk uploaded (restart)',
                     {
@@ -2409,7 +2434,14 @@ export default function App() {
     // Set up upload progress callback BEFORE starting recording
     // This ensures the callback is ready when the first chunk is uploaded
     setUploadProgressCallback(
-      ({ callId: uploadedCallId, path, publicUrl, error, failed }) => {
+      ({
+        callId: uploadedCallId,
+        path,
+        publicUrl,
+        error,
+        failed,
+        uploading,
+      }) => {
         console.log('[handleStartCall] Upload progress callback received', {
           uploadedCallId,
           expectedCallId: callId,
@@ -2417,17 +2449,26 @@ export default function App() {
           publicUrl,
           error,
           failed,
+          uploading,
           currentCount: uploadedChunksCount,
         });
 
         if (uploadedCallId === callId) {
-          if (failed) {
+          // Check if this is an "uploading" notification (not success/failure yet)
+          if (uploading) {
+            console.log('[handleStartCall] ⏳ Upload started', {
+              callId: uploadedCallId,
+            });
+            setUploadStatus({ uploading: true, success: false, failed: false });
+          } else if (failed) {
             console.error('[handleStartCall] ❌ Chunk upload failed', {
               callId: uploadedCallId,
               error,
             });
             setUploadStatus({
               success: false,
+              failed: true,
+              uploading: false,
               error: error || 'Upload failed',
             });
           } else {
@@ -2441,7 +2482,7 @@ export default function App() {
               });
               return newCount;
             });
-            setUploadStatus({ success: true });
+            setUploadStatus({ success: true, failed: false, uploading: false });
           }
         } else {
           console.warn('[handleStartCall] ⚠️ Callback for different call ID', {
@@ -2721,9 +2762,25 @@ export default function App() {
       });
       // Set up upload progress callback (handles both success and failure)
       setUploadProgressCallback(
-        ({ callId: uploadedCallId, path, publicUrl, failed, error }) => {
+        ({
+          callId: uploadedCallId,
+          path,
+          publicUrl,
+          failed,
+          error,
+          uploading,
+        }) => {
           if (uploadedCallId === callRow.id) {
-            if (failed) {
+            if (uploading) {
+              console.log('[handleAccept] ⏳ Upload started', {
+                callId: uploadedCallId,
+              });
+              setUploadStatus({
+                uploading: true,
+                success: false,
+                failed: false,
+              });
+            } else if (failed) {
               console.log('[handleAccept] ❌ Chunk upload failed', {
                 callId: uploadedCallId,
                 path,
@@ -2731,11 +2788,17 @@ export default function App() {
               });
               setUploadStatus({
                 success: false,
+                failed: true,
+                uploading: false,
                 error: error || 'Upload failed',
               });
             } else {
               setUploadedChunksCount((prev) => prev + 1);
-              setUploadStatus({ success: true });
+              setUploadStatus({
+                success: true,
+                failed: false,
+                uploading: false,
+              });
               console.log('[handleAccept] ✅ Chunk uploaded', {
                 callId: uploadedCallId,
                 path,

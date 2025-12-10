@@ -141,12 +141,13 @@ export default function CallingView({
   onEnd,
   audioStream,
   uploadedChunksCount = 0,
-  uploadStatus = null, // { success: boolean, error?: string }
+  uploadStatus = null, // { success: boolean, uploading?: boolean, error?: string }
   myPhoneNumber = '',
   myUsername = '',
 }) {
   const [recordingTime, setRecordingTime] = useState(0);
   const [recordingStartTime, setRecordingStartTime] = useState(null);
+  const [uploadingTime, setUploadingTime] = useState(0); // Track how long we've been uploading
 
   // Track recording time (countdown from 20 seconds)
   useEffect(() => {
@@ -172,6 +173,22 @@ export default function CallingView({
     return () => clearInterval(interval);
   }, [isOnline]);
 
+  // Track uploading time (to show user how long they've been waiting)
+  useEffect(() => {
+    if (uploadStatus?.uploading) {
+      const startTime = Date.now();
+      setUploadingTime(0);
+
+      const interval = setInterval(() => {
+        setUploadingTime(Math.floor((Date.now() - startTime) / 1000));
+      }, 1000);
+
+      return () => clearInterval(interval);
+    } else {
+      setUploadingTime(0);
+    }
+  }, [uploadStatus?.uploading]);
+
   // Format time as MM:SS
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -183,6 +200,12 @@ export default function CallingView({
   const remainingTime = RECORDING_DURATION_SECONDS - recordingTime;
   const isRecordingComplete = recordingTime >= RECORDING_DURATION_SECONDS;
   const progressPercent = (recordingTime / RECORDING_DURATION_SECONDS) * 100;
+
+  // Determine upload state
+  const isUploading = uploadStatus?.uploading === true;
+  const uploadSucceeded = uploadStatus?.success === true && !isUploading;
+  const uploadFailed =
+    uploadStatus?.success === false && uploadStatus?.failed === true;
 
   // Determine if current user is the caller or recipient
   const normalizeNumber = normalizePhoneNumber;
@@ -216,7 +239,8 @@ export default function CallingView({
               color: 'rgba(255, 255, 255, 0.8)',
             }}
           >
-            calling {call.from_username}
+            calling{' '}
+            <span style={{ fontWeight: 'bold' }}>{call.from_username}</span>
           </div>
         )}
         <div class='caller-number'>{call.other_number}</div>
@@ -230,9 +254,9 @@ export default function CallingView({
                 fontSize: '14px',
                 fontWeight: '500',
                 color: isRecordingComplete
-                  ? uploadStatus?.success
+                  ? uploadSucceeded
                     ? '#34c759'
-                    : uploadStatus?.success === false
+                    : uploadFailed
                     ? '#ff3b30'
                     : '#ffcc00'
                   : '#34c759',
@@ -240,13 +264,30 @@ export default function CallingView({
               }}
             >
               {isRecordingComplete
-                ? uploadStatus?.success
+                ? uploadSucceeded
                   ? '✅ Recording uploaded!'
-                  : uploadStatus?.success === false
-                  ? `❌ Upload failed: ${uploadStatus.error || 'Unknown error'}`
-                  : '⏳ Uploading...'
+                  : uploadFailed
+                  ? `❌ ${uploadStatus.error || 'Upload failed'}`
+                  : isUploading
+                  ? `⏳ Uploading... ${
+                      uploadingTime > 0 ? `(${uploadingTime}s)` : ''
+                    }`
+                  : '⏳ Preparing upload...'
                 : `🎤 Recording... ${formatTime(remainingTime)} remaining`}
             </div>
+
+            {/* Uploading hint if taking too long */}
+            {isUploading && uploadingTime > 5 && (
+              <div
+                style={{
+                  fontSize: '12px',
+                  color: '#ffcc00',
+                  marginBottom: '8px',
+                }}
+              >
+                ⚠️ Slow network - upload may take a while
+              </div>
+            )}
 
             {/* Progress Bar */}
             <div
@@ -263,9 +304,9 @@ export default function CallingView({
                   width: `${progressPercent}%`,
                   height: '100%',
                   backgroundColor: isRecordingComplete
-                    ? uploadStatus?.success
+                    ? uploadSucceeded
                       ? '#34c759'
-                      : uploadStatus?.success === false
+                      : uploadFailed
                       ? '#ff3b30'
                       : '#ffcc00'
                     : '#34c759',
