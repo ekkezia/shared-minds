@@ -202,10 +202,14 @@ export default function CallingView({
   const progressPercent = (recordingTime / RECORDING_DURATION_SECONDS) * 100;
 
   // Determine upload state
+  // Upload succeeded if: uploadStatus.success is true OR uploadedChunksCount > 0 (chunk was uploaded)
   const isUploading = uploadStatus?.uploading === true;
-  const uploadSucceeded = uploadStatus?.success === true && !isUploading;
+  const uploadSucceeded =
+    (uploadStatus?.success === true || uploadedChunksCount > 0) && !isUploading;
   const uploadFailed =
-    uploadStatus?.success === false && uploadStatus?.failed === true;
+    uploadStatus?.success === false &&
+    uploadStatus?.failed === true &&
+    uploadedChunksCount === 0;
 
   // Determine if current user is the caller or recipient
   const normalizeNumber = normalizePhoneNumber;

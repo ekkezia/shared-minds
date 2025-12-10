@@ -1774,14 +1774,15 @@ export default function App() {
         setUploadedChunksCount(0);
         setView('connected');
       } else {
-        // when we regain connectivity, show live calling UI and RESTART RECORDING
-        console.log(
-          '[connectivity effect] Coming back online - restarting recording',
-          {
-            callId: currentCall.id,
-            lastOfflineTimestamp: lastOfflineTimestampRef.current,
-          },
-        );
+        // when we regain connectivity, show live calling UI
+        // BUT: Only restart recording if we haven't already uploaded for this call
+        // (we only record ONCE per online period, not continuously)
+        console.log('[connectivity effect] Coming back online', {
+          callId: currentCall.id,
+          lastOfflineTimestamp: lastOfflineTimestampRef.current,
+          uploadedChunksCount,
+        });
+
         // Track state change: going to recording mode
         myStateHistoryRef.current.push({
           timestamp: new Date().toISOString(),
@@ -1789,8 +1790,9 @@ export default function App() {
           isOnline: true,
         });
         setView('calling');
-        // Restart recording when coming back online
-        // Use a small delay to ensure stopRecording has fully completed
+
+        // Only restart recording if we haven't uploaded yet for this online session
+        // Since we only record once per online period, don't restart if already uploaded
         if (currentCall && currentCall.id && myPhoneNumber) {
           // Reset the first chunk of current session - we'll track it when first chunk arrives
           firstChunkOfCurrentSessionRef.current = null;

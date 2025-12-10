@@ -252,6 +252,22 @@ export function setUploadProgressCallback(fn) {
 }
 
 /**
+ * Check if we've already uploaded for this online session
+ * Used to prevent multiple recordings in the same online period
+ */
+export function hasUploadedForSession() {
+  return hasUploadedThisSession;
+}
+
+/**
+ * Reset the upload session flag (call when starting a new call)
+ */
+export function resetUploadSession() {
+  hasUploadedThisSession = false;
+  console.log('[audioService] Reset upload session flag');
+}
+
+/**
  * SIMPLIFIED startRecording:
  * - Records for 20 seconds (one chunk per online period)
  * - Uploads once when recording stops
@@ -365,21 +381,31 @@ export async function startRecording(callId, myPhoneNumber) {
   // Reset chunkIndex only for new calls
   if (!isRestartForSameCall) {
     chunkIndex = 0;
+    hasUploadedThisSession = false; // Reset for new call
     console.log('[startRecording] New call - resetting chunkIndex to 0');
   } else {
+    // For restart of same call (coming back online), we want to record a NEW chunk
+    // The chunkIndex was already incremented after the previous successful upload
+    // So we'll get a new file number (001, 002, 003, etc.)
     console.log(
-      '[startRecording] Restart - preserving chunkIndex:',
-      chunkIndex,
+      '[startRecording] Restart for same call - will record new chunk',
+      {
+        callId,
+        chunkIndex, // This will be the next chunk number
+        previouslyUploaded: hasUploadedThisSession,
+      },
     );
   }
 
-  // Reset session flag for this online period
+  // Reset the session flag for this new online period
+  // This allows recording once per online period
   hasUploadedThisSession = false;
 
   console.log('[startRecording] Starting 20-second recording session', {
     callId,
     myPhoneNumber,
     chunkIndex,
+    hasUploadedThisSession,
   });
 
   // Get audio stream with better error handling for mobile
@@ -452,9 +478,22 @@ export async function startRecording(callId, myPhoneNumber) {
   };
 
   // Handle recording stop - upload the complete audio
+  // IMPORTANT: Use captured callId and myPhoneNumber from when startRecording was called
+  const capturedCallId = callId;
+  const capturedPhoneNumber = myPhoneNumber;
+
   mediaRecorder.onstop = async () => {
+    // Verify we're still on the same call
+    if (currentCallId !== capturedCallId) {
+      console.warn('[startRecording] ⚠️ Call ID changed, skipping upload', {
+        capturedCallId,
+        currentCallId,
+      });
+      return;
+    }
+
     console.log('[startRecording] ⏹️ Recording stopped, preparing upload', {
-      callId,
+      callId: capturedCallId,
       totalDataChunks: audioChunks.length,
       hasUploadedThisSession,
     });
@@ -470,7 +509,7 @@ export async function startRecording(callId, myPhoneNumber) {
       // Notify UI of failure
       if (onUploadProgress) {
         onUploadProgress({
-          callId,
+          callId: capturedCallId,
           chunkIndex,
           failed: true,
           error: 'No audio data recorded',
@@ -483,20 +522,20 @@ export async function startRecording(callId, myPhoneNumber) {
     const mimeTypeToUse = mediaRecorder?.mimeType || 'audio/webm';
     const blob = new Blob(audioChunks, { type: mimeTypeToUse });
     console.log('[startRecording] 🎤 Combined audio blob', {
-      callId,
+      callId: capturedCallId,
       blobSize: blob.size,
       blobType: blob.type,
       chunkIndex,
     });
 
-    // Create file path
+    // Create file path - use captured values to ensure correct path
     const paddedChunkNum = String(chunkIndex).padStart(3, '0');
-    const path = `call-${callId}/${myPhoneNumber}/${paddedChunkNum}.webm`;
+    const path = `call-${capturedCallId}/${capturedPhoneNumber}/${paddedChunkNum}.webm`;
 
     // Notify UI that upload is starting
     if (onUploadProgress) {
       onUploadProgress({
-        callId,
+        callId: capturedCallId,
         chunkIndex,
         uploading: true,
         failed: false,
@@ -516,7 +555,7 @@ export async function startRecording(callId, myPhoneNumber) {
 
     try {
       console.log('[startRecording] ⬆️ Uploading audio...', {
-        callId,
+        callId: capturedCallId,
         path,
         blobSize: blob.size,
         timeout: `${UPLOAD_TIMEOUT_MS / 1000}s`,
@@ -531,15 +570,15 @@ export async function startRecording(callId, myPhoneNumber) {
         );
 
         console.log('[startRecording] ✅ Audio uploaded to storage', {
-          callId,
+          callId: capturedCallId,
           publicUrl,
           filePath,
         });
 
         // Insert into database
         await insertAudioChunkRow({
-          call_id: callId,
-          from_number: myPhoneNumber,
+          call_id: capturedCallId,
+          from_number: capturedPhoneNumber,
           url: publicUrl,
           file_path: filePath,
         });
@@ -556,7 +595,7 @@ export async function startRecording(callId, myPhoneNumber) {
       hasUploadedThisSession = true;
 
       console.log('[startRecording] ✅ Audio chunk saved to database', {
-        callId,
+        callId: capturedCallId,
         chunkIndex,
         publicUrl,
       });
@@ -572,7 +611,7 @@ export async function startRecording(callId, myPhoneNumber) {
       // Notify UI of success
       if (onUploadProgress) {
         onUploadProgress({
-          callId,
+          callId: capturedCallId,
           chunkIndex: chunkIndex - 1, // The chunk we just uploaded
           path,
           publicUrl,
@@ -581,13 +620,13 @@ export async function startRecording(callId, myPhoneNumber) {
       }
 
       console.log('[startRecording] ✅ Upload complete!', {
-        callId,
+        callId: capturedCallId,
         uploadedChunkIndex: chunkIndex - 1,
       });
     } catch (err) {
       const isTimeout = err?.message?.includes('timed out');
       console.error('[startRecording] ❌ Upload failed', {
-        callId,
+        callId: capturedCallId,
         chunkIndex,
         error: err,
         errorMessage: err?.message,
@@ -601,7 +640,7 @@ export async function startRecording(callId, myPhoneNumber) {
       // Notify UI of failure - chunk will be shown in red
       if (onUploadProgress) {
         onUploadProgress({
-          callId,
+          callId: capturedCallId,
           chunkIndex,
           path,
           failed: true,
@@ -614,7 +653,7 @@ export async function startRecording(callId, myPhoneNumber) {
       // DON'T increment chunk index on failure - retry with same index
       // This way the next online session will try to upload the same chunk number
       console.log('[startRecording] ⚠️ Keeping chunkIndex for retry', {
-        callId,
+        callId: capturedCallId,
         chunkIndex,
         reason: 'Upload failed, will retry on next online period',
       });
@@ -623,7 +662,7 @@ export async function startRecording(callId, myPhoneNumber) {
 
   mediaRecorder.onerror = (event) => {
     console.error('[startRecording] ❌ MediaRecorder error', {
-      callId,
+      callId: capturedCallId,
       error: event.error,
       errorMessage: event.error?.message,
     });
@@ -632,7 +671,7 @@ export async function startRecording(callId, myPhoneNumber) {
   // Start recording
   mediaRecorder.start();
   console.log('[startRecording] ▶️ Recording started', {
-    callId,
+    callId: capturedCallId,
     state: mediaRecorder.state,
     duration: `${RECORDING_DURATION_MS / 1000}s`,
   });
@@ -640,7 +679,7 @@ export async function startRecording(callId, myPhoneNumber) {
   // Set timeout to stop recording after 20 seconds
   recordingTimeoutId = setTimeout(() => {
     console.log('[startRecording] ⏰ 20 seconds elapsed, stopping recording', {
-      callId,
+      callId: capturedCallId,
       state: mediaRecorder?.state,
     });
 
