@@ -1298,6 +1298,59 @@ export function listenForAudio(callId, onChunk, options = {}) {
   return audioSubscription;
 }
 
+/**
+ * listenForCallStatusChange(callId, onUpdate)
+ * - Subscribes to call status updates
+ * - Useful for caller to know when recipient accepts/rejects
+ */
+let callStatusSubscription = null;
+export function listenForCallStatusChange(callId, onUpdate) {
+  if (!supabase || !callId) return null;
+
+  try {
+    if (callStatusSubscription) {
+      callStatusSubscription.unsubscribe().catch?.(() => {});
+      callStatusSubscription = null;
+    }
+  } catch (e) {}
+
+  const channelName = `call-status-${callId}`;
+  console.log('[listenForCallStatusChange] Setting up subscription', {
+    callId,
+    channelName,
+  });
+
+  callStatusSubscription = supabase
+    .channel(channelName)
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'calls',
+        filter: `id=eq.${callId}`,
+      },
+      (payload) => {
+        console.log('[listenForCallStatusChange] Call updated', {
+          callId,
+          newStatus: payload.new?.status,
+          acceptedAt: payload.new?.accepted_at,
+        });
+        if (onUpdate) onUpdate(payload.new);
+      },
+    )
+    .subscribe();
+
+  return callStatusSubscription;
+}
+
+export function unsubscribeCallStatus() {
+  if (callStatusSubscription) {
+    callStatusSubscription.unsubscribe().catch?.(() => {});
+    callStatusSubscription = null;
+  }
+}
+
 export async function unsubscribeAudio() {
   try {
     if (audioSubscription) {

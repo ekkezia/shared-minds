@@ -43,6 +43,8 @@ import {
   logUserStateChange,
   fetchStateLogForCall,
   subscribeToStateLog,
+  listenForCallStatusChange,
+  unsubscribeCallStatus,
 } from './services/audioService.js';
 import useOnlineStatus from './hooks/useOnlineStatus.js';
 
@@ -223,8 +225,9 @@ export default function App() {
   const seekTargetIndexRef = useRef(null); // Track the target chunk index after seek (null = use default)
 
   // Track state history for dual timeline visualization
-  const myStateHistoryRef = useRef([]); // Array of {timestamp, state: 'recording'|'playback', isOnline}
-  const otherStateHistoryRef = useRef([]); // Array of {timestamp, state: 'recording'|'playback'}
+  // Using state instead of refs so changes trigger re-renders of DualTimeline
+  const [myStateHistory, setMyStateHistory] = useState([]); // Array of {timestamp, state: 'recording'|'playback', isOnline}
+  const [otherStateHistory, setOtherStateHistory] = useState([]); // Array of {timestamp, state: 'recording'|'playback'}
 
   // Call duration timer - persists across view changes
   const [callDuration, setCallDuration] = useState(0); // seconds since call started
@@ -1154,14 +1157,15 @@ export default function App() {
         );
 
         if (otherUserLogs.length > 0) {
-          otherStateHistoryRef.current = otherUserLogs.map((log) => ({
+          const newHistory = otherUserLogs.map((log) => ({
             timestamp: log.created_at,
             state: log.state,
             isOnline: log.is_online,
           }));
+          setOtherStateHistory(newHistory);
           console.log('[App] 📊 Updated other user state history from logs', {
             count: otherUserLogs.length,
-            history: otherStateHistoryRef.current,
+            history: newHistory,
           });
         }
       } catch (err) {
@@ -1176,11 +1180,14 @@ export default function App() {
       // Only track other user's state changes
       if (logPhoneNorm !== myNorm) {
         console.log('[App] 📥 New state log from other user', newLog);
-        otherStateHistoryRef.current.push({
-          timestamp: newLog.created_at,
-          state: newLog.state,
-          isOnline: newLog.is_online,
-        });
+        setOtherStateHistory((prev) => [
+          ...prev,
+          {
+            timestamp: newLog.created_at,
+            state: newLog.state,
+            isOnline: newLog.is_online,
+          },
+        ]);
       }
     });
 
@@ -1189,6 +1196,61 @@ export default function App() {
       unsubscribe();
     };
   }, [currentCall?.id, myPhoneNumber, view]);
+
+  // Subscribe to call status changes (for caller to know when recipient accepts)
+  useEffect(() => {
+    if (!currentCall?.id) return;
+
+    // Only subscribe if call is ringing (waiting for acceptance)
+    const status = String(currentCall.status || '').toLowerCase();
+    if (status !== 'ringing') return;
+
+    console.log('[App] 📞 Setting up call status subscription', {
+      callId: currentCall.id,
+      status,
+    });
+
+    const subscription = listenForCallStatusChange(
+      currentCall.id,
+      (updatedCall) => {
+        const newStatus = String(updatedCall.status || '').toLowerCase();
+        console.log('[App] 📞 Call status changed', {
+          callId: updatedCall.id,
+          oldStatus: status,
+          newStatus,
+          acceptedAt: updatedCall.accepted_at,
+        });
+
+        // Update currentCall with fresh data (including accepted_at for timer)
+        setCurrentCall((prev) => ({
+          ...prev,
+          ...updatedCall,
+        }));
+
+        // If call became active, switch to calling view
+        if (newStatus === 'active') {
+          setView('calling');
+
+          // Start recording if online
+          if (isOnline && myPhoneNumber) {
+            startRecording(updatedCall.id, myPhoneNumber).catch((err) => {
+              console.warn(
+                '[App] Failed to start recording after call accepted',
+                err,
+              );
+            });
+          }
+        } else if (newStatus === 'rejected' || newStatus === 'ended') {
+          setView('end');
+        }
+      },
+    );
+
+    return () => {
+      console.log('[App] 🔌 Cleaning up call status subscription');
+      unsubscribeCallStatus();
+    };
+  }, [currentCall?.id, currentCall?.status, isOnline, myPhoneNumber]);
 
   // Play cached audio when entering 'connected' view (offline)
   useEffect(() => {
@@ -1910,11 +1972,14 @@ export default function App() {
           timestamp: lastOfflineTimestampRef.current,
         });
         // Track state change: going to playback mode
-        myStateHistoryRef.current.push({
-          timestamp: lastOfflineTimestampRef.current,
-          state: 'playback',
-          isOnline: false,
-        });
+        setMyStateHistory((prev) => [
+          ...prev,
+          {
+            timestamp: lastOfflineTimestampRef.current,
+            state: 'playback',
+            isOnline: false,
+          },
+        ]);
 
         // Log state change to database for other user to see
         logUserStateChange(
@@ -1942,11 +2007,14 @@ export default function App() {
         });
 
         // Track state change: going to recording mode
-        myStateHistoryRef.current.push({
-          timestamp: new Date().toISOString(),
-          state: 'recording',
-          isOnline: true,
-        });
+        setMyStateHistory((prev) => [
+          ...prev,
+          {
+            timestamp: new Date().toISOString(),
+            state: 'recording',
+            isOnline: true,
+          },
+        ]);
 
         // Log state change to database for other user to see
         logUserStateChange(
@@ -2480,11 +2548,14 @@ export default function App() {
             timestamp: lastOfflineTimestampRef.current,
           });
           // Track state change: going to playback mode
-          myStateHistoryRef.current.push({
-            timestamp: lastOfflineTimestampRef.current,
-            state: 'playback',
-            isOnline: false,
-          });
+          setMyStateHistory((prev) => [
+            ...prev,
+            {
+              timestamp: lastOfflineTimestampRef.current,
+              state: 'playback',
+              isOnline: false,
+            },
+          ]);
 
           // Log state change to database for other user to see
           logUserStateChange(
@@ -2548,6 +2619,10 @@ export default function App() {
 
     // Clear any previous call ID reference before creating new call
     lastCreatedCallIdRef.current = null;
+
+    // Reset state histories for new call
+    setMyStateHistory([]);
+    setOtherStateHistory([]);
 
     // Create the call in the DB (do not supply an id — let DB generate UUID)
     let createdCall;
@@ -2676,11 +2751,14 @@ export default function App() {
     setUploadStatus(null);
 
     // Track state: starting recording
-    myStateHistoryRef.current.push({
-      timestamp: new Date().toISOString(),
-      state: 'recording',
-      isOnline: isOnline,
-    });
+    setMyStateHistory((prev) => [
+      ...prev,
+      {
+        timestamp: new Date().toISOString(),
+        state: 'recording',
+        isOnline: isOnline,
+      },
+    ]);
 
     // Log initial state to database
     logUserStateChange(callId, myPhoneNumber, 'recording', isOnline).catch(
@@ -2905,14 +2983,19 @@ export default function App() {
     if (!callRow) return;
 
     // Update DB status to active + accepted_at (audioService.acceptCall handles the DB update)
+    const acceptedAt = new Date().toISOString();
     try {
       await acceptCall(callRow.id);
     } catch (err) {
       console.warn('acceptCall error', err);
     }
 
-    // Update local currentCall to reflect acceptance
-    setCurrentCall((prev) => ({ ...(prev || {}), status: 'active' }));
+    // Update local currentCall to reflect acceptance (include accepted_at for timer)
+    setCurrentCall((prev) => ({
+      ...(prev || {}),
+      status: 'active',
+      accepted_at: acceptedAt,
+    }));
 
     // Update usersInCall - ensure both participants are marked as in call
     if (callRow) {
@@ -2998,11 +3081,14 @@ export default function App() {
       setUploadStatus(null);
 
       // Track state: starting recording (accepting call)
-      myStateHistoryRef.current.push({
-        timestamp: new Date().toISOString(),
-        state: 'recording',
-        isOnline: isOnline,
-      });
+      setMyStateHistory((prev) => [
+        ...prev,
+        {
+          timestamp: new Date().toISOString(),
+          state: 'recording',
+          isOnline: isOnline,
+        },
+      ]);
 
       // Log initial state to database
       logUserStateChange(
@@ -3201,8 +3287,8 @@ export default function App() {
           playbackController={playbackController}
           myPhoneNumber={myPhoneNumber}
           callStartTime={currentCall.created_at}
-          myStateHistory={myStateHistoryRef.current}
-          otherStateHistory={otherStateHistoryRef.current}
+          myStateHistory={myStateHistory}
+          otherStateHistory={otherStateHistory}
           callDuration={callDuration}
         />
       )}

@@ -41,6 +41,15 @@ export default function DualTimeline({
 
   // Calculate timeline data from chunks and state history
   const timelineData = useMemo(() => {
+    console.log('[DualTimeline] Computing timeline data', {
+      universalStartTime,
+      myStateHistoryLength: myStateHistory?.length || 0,
+      otherStateHistoryLength: otherStateHistory?.length || 0,
+      chunksLength: chunks?.length || 0,
+      myStateHistory,
+      otherStateHistory,
+    });
+
     if (!universalStartTime) return { mySegments: [], otherSegments: [] };
 
     const universalStart = new Date(universalStartTime).getTime();
@@ -96,9 +105,19 @@ export default function DualTimeline({
     const otherJoinOffset = isCaller ? recipientJoinOffset : 0;
     const RECORDING_DURATION = 20; // Each recording is ~20 seconds
 
+    console.log('[DualTimeline] Building other user timeline', {
+      hasOtherStateHistory: otherStateHistory && otherStateHistory.length > 0,
+      otherStateHistoryLength: otherStateHistory?.length || 0,
+      otherJoinOffset,
+      isCaller,
+    });
+
     // Check if we have state history from the database
     if (otherStateHistory && otherStateHistory.length > 0) {
       // Use actual state history from database
+      console.log(
+        '[DualTimeline] Using state history from database for other user',
+      );
       let otherCurrentState = 'recording'; // Default: start recording
       let otherLastTime = otherJoinOffset;
 
