@@ -2,6 +2,25 @@
 import { useMemo, useState, useRef, useEffect } from 'preact/hooks';
 import DualTimeline from '../components/DualTimeline.jsx';
 
+// Number of bars per chunk
+const BARS_PER_CHUNK = 8;
+
+// Generate random but consistent bar heights for a chunk
+function generateBarHeights(chunkId, count = BARS_PER_CHUNK) {
+  // Use chunk ID as seed for consistent heights
+  const seed = chunkId
+    ? chunkId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)
+    : Math.random() * 1000;
+
+  const heights = [];
+  for (let i = 0; i < count; i++) {
+    // Generate pseudo-random heights between 20% and 100%
+    const h = 20 + ((seed * (i + 1) * 7) % 80);
+    heights.push(h);
+  }
+  return heights;
+}
+
 export default function CallConnectedView({
   call,
   onEnd,
@@ -18,7 +37,6 @@ export default function CallConnectedView({
   const timelineRef = useRef(null);
 
   // Filter chunks to only show other party's chunks for the scrubber
-  // (DualTimeline needs all chunks, but scrubber should only show playable chunks)
   const normalize = (s) => String(s || '').replace(/\D/g, '');
   const myNorm = normalize(myPhoneNumber);
   const playbackChunks = useMemo(() => {
@@ -27,8 +45,19 @@ export default function CallConnectedView({
     });
   }, [chunks, myPhoneNumber, myNorm]);
 
+  // Generate bar heights for each chunk (memoized for consistency)
+  const chunkBarHeights = useMemo(() => {
+    return playbackChunks.map((chunk) =>
+      generateBarHeights(chunk.id || String(Math.random())),
+    );
+  }, [playbackChunks]);
+
+  // Width per chunk (bars + spacing)
+  const CHUNK_WIDTH = 60; // px per chunk
+  const BAR_WIDTH = 4;
+  const BAR_GAP = 2;
+
   // Auto-scroll to keep the currently playing chunk visible
-  // Only scroll when the chunk ID changes, not on every progress update
   useEffect(() => {
     if (
       !timelineRef.current ||
@@ -45,37 +74,29 @@ export default function CallConnectedView({
 
     if (currentIndex === -1) return;
 
-    // Calculate the position of the current chunk
-    const chunkLeft = currentIndex * 80; // Each chunk is 80px wide
-    const chunkRight = chunkLeft + 80;
+    const chunkLeft = currentIndex * CHUNK_WIDTH;
+    const chunkRight = chunkLeft + CHUNK_WIDTH;
     const scrollLeft = timeline.scrollLeft;
     const scrollRight = scrollLeft + timeline.clientWidth;
 
-    // Only scroll if the chunk is significantly outside the visible area
-    // Add a buffer zone (20px) to prevent constant micro-adjustments
     const buffer = 20;
     const needsScroll =
       chunkLeft < scrollLeft - buffer || chunkRight > scrollRight + buffer;
 
     if (needsScroll) {
-      // Calculate the ideal scroll position to center the chunk (with some padding)
-      const idealScroll = chunkLeft - timeline.clientWidth / 2 + 40; // Center the chunk
+      const idealScroll =
+        chunkLeft - timeline.clientWidth / 2 + CHUNK_WIDTH / 2;
       const maxScroll = timeline.scrollWidth - timeline.clientWidth;
       const targetScroll = Math.max(0, Math.min(idealScroll, maxScroll));
 
-      // Smooth scroll to the target position
       timeline.scrollTo({
         left: targetScroll,
         behavior: 'smooth',
       });
     }
-  }, [currentPlayingChunkId, playbackChunks]); // Use playbackChunks instead of chunks
-  // Calculate total duration (each chunk is ~5 seconds)
-  const totalDuration = playbackChunks.length * 5;
-  const chunkWidthPercent =
-    playbackChunks.length > 0 ? 100 / playbackChunks.length : 0;
+  }, [currentPlayingChunkId, playbackChunks]);
 
-  // Calculate scrubber position (in pixels, not percentage)
+  // Calculate scrubber position
   const scrubberPosition = useMemo(() => {
     if (!currentPlayingChunkId || playbackChunks.length === 0) return 0;
 
@@ -84,9 +105,8 @@ export default function CallConnectedView({
     );
     if (currentIndex === -1) return 0;
 
-    // Position = (chunk index * 80px) + (progress within chunk * 80px)
-    const basePosition = currentIndex * 80;
-    const progressOffset = currentChunkProgress * 80;
+    const basePosition = currentIndex * CHUNK_WIDTH;
+    const progressOffset = currentChunkProgress * CHUNK_WIDTH;
     return basePosition + progressOffset;
   }, [currentPlayingChunkId, currentChunkProgress, playbackChunks]);
 
@@ -97,7 +117,7 @@ export default function CallConnectedView({
         <div class='caller-number'>{call.other_number}</div>
         <div class='call-status'>
           {chunks.length > 0
-            ? `Playing ${chunks.length} audio chunks...`
+            ? `Playing ${playbackChunks.length} audio chunks...`
             : 'Loading audio chunks...'}
         </div>
       </div>
@@ -114,11 +134,11 @@ export default function CallConnectedView({
         />
       )}
 
-      {/* Visual Timeline - Only show if we have chunks to play back */}
+      {/* Audio Bar Scrubber - Only show if we have chunks to play back */}
       {playbackChunks.length > 0 && (
         <div
           style={{
-            width: '90%',
+            width: '95%',
             margin: '20px auto',
             padding: '12px',
             backgroundColor: 'rgba(0, 0, 0, 0.3)',
@@ -126,24 +146,21 @@ export default function CallConnectedView({
             position: 'relative',
           }}
         >
-          {/* Timeline Container */}
+          {/* Scrollable Timeline Container */}
           <div
             ref={timelineRef}
-            class='chunk-timeline-scrollable'
             style={{
               position: 'relative',
               width: '100%',
-              height: '60px',
-              backgroundColor: 'rgba(255, 255, 255, 0.1)',
+              height: '80px',
+              backgroundColor: 'rgba(255, 255, 255, 0.05)',
               borderRadius: '4px',
               overflowX: 'auto',
               overflowY: 'hidden',
               scrollBehavior: 'smooth',
               cursor: 'pointer',
-              // Custom scrollbar styling
               scrollbarWidth: 'thin',
               scrollbarColor: 'rgba(255, 255, 255, 0.3) rgba(0, 0, 0, 0.1)',
-              // Ensure scrolling works on mobile
               WebkitOverflowScrolling: 'touch',
               touchAction: 'pan-x',
             }}
@@ -154,86 +171,130 @@ export default function CallConnectedView({
               const scrollX = timelineRef.current.scrollLeft;
               const totalX = clickX + scrollX;
 
-              // Calculate which chunk was clicked (0-based index)
-              const chunkIndex = Math.floor(totalX / 80);
+              const chunkIndex = Math.floor(totalX / CHUNK_WIDTH);
 
               if (chunkIndex >= 0 && chunkIndex < playbackChunks.length) {
                 console.log('[CallConnectedView] Clicked chunk', {
                   chunkIndex,
-                  displayNumber: chunkIndex + 1, // 1-based for display
+                  displayNumber: chunkIndex + 1,
                   chunkId: playbackChunks[chunkIndex].id,
-                  wasPlaying: isPlaying,
                 });
 
-                // Seek to the clicked chunk and always start playing
                 playbackController.seek(chunkIndex, 0);
-                // Always start playback after clicking on a chunk
                 setTimeout(() => {
                   playbackController.play();
                 }, 150);
               }
             }}
           >
-            {/* Chunk Blocks */}
+            {/* Chunks as Audio Bars */}
             <div
               style={{
                 position: 'relative',
-                width: `${Math.max(playbackChunks.length * 80, 100)}px`, // Fixed width per chunk (80px each), minimum 100px
+                width: `${Math.max(
+                  playbackChunks.length * CHUNK_WIDTH,
+                  100,
+                )}px`,
                 height: '100%',
-                minWidth: '100%',
-                // Ensure content is wider than container when there are many chunks
-                display: 'inline-block',
+                display: 'flex',
+                alignItems: 'center',
               }}
             >
-              {playbackChunks.map((chunk, index) => {
+              {playbackChunks.map((chunk, chunkIndex) => {
                 const isPlayingChunk = chunk.id === currentPlayingChunkId;
-                const currentIndex = currentPlayingChunkId
+                const currentIdx = currentPlayingChunkId
                   ? playbackChunks.findIndex(
                       (c) => c.id === currentPlayingChunkId,
                     )
                   : -1;
-                const isPlayed = currentIndex > index;
-                // Check if chunk failed to upload (has failed flag or no URL)
+                const isPlayed = currentIdx > chunkIndex;
                 const isFailed =
                   chunk.failed === true || (!chunk.url && !chunk.publicUrl);
 
+                const barHeights = chunkBarHeights[chunkIndex] || [];
+
+                // Calculate how many bars should be "filled" based on progress
+                const barsToFill = isPlayingChunk
+                  ? Math.floor(currentChunkProgress * BARS_PER_CHUNK)
+                  : isPlayed
+                  ? BARS_PER_CHUNK
+                  : 0;
+
                 return (
                   <div
-                    key={chunk.id || index}
+                    key={chunk.id || chunkIndex}
                     style={{
-                      position: 'absolute',
-                      left: `${index * 80}px`, // Fixed 80px per chunk
-                      width: '75px', // Fixed width
+                      position: 'relative',
+                      width: `${CHUNK_WIDTH}px`,
                       height: '100%',
-                      backgroundColor: isFailed
-                        ? '#ff3b30' // Red for failed chunks
-                        : isPlayingChunk
-                        ? '#34c759'
-                        : isPlayed
-                        ? '#007AFF'
-                        : 'rgba(255, 255, 255, 0.2)',
-                      border: isPlayingChunk
-                        ? '2px solid #fff'
-                        : isFailed
-                        ? '2px solid #ff6b6b'
-                        : '1px solid rgba(255, 255, 255, 0.3)',
-                      borderRadius: '2px',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      fontSize: '10px',
-                      color: '#fff',
-                      fontWeight: isPlayingChunk ? 'bold' : 'normal',
-                      transition: 'background-color 0.2s',
+                      gap: `${BAR_GAP}px`,
+                      borderLeft:
+                        chunkIndex > 0
+                          ? '1px solid rgba(255, 255, 255, 0.2)'
+                          : 'none',
+                      borderRight:
+                        chunkIndex === playbackChunks.length - 1
+                          ? '1px solid rgba(255, 255, 255, 0.2)'
+                          : 'none',
                       boxSizing: 'border-box',
-                      marginRight: '5px',
-                      opacity: isFailed ? 0.7 : 1,
+                      padding: '0 4px',
                     }}
-                    title={`Chunk ${index + 1}/${playbackChunks.length}${
+                    title={`Chunk ${chunkIndex + 1}/${playbackChunks.length}${
                       isPlayingChunk ? ' (Playing)' : ''
-                    }${isFailed ? ' (FAILED)' : ''} - ${chunk.id || 'no-id'}`}
+                    }${isFailed ? ' (FAILED)' : ''}`}
                   >
-                    {isFailed ? '✗' : index + 1}
+                    {/* Audio Bars */}
+                    {barHeights.map((heightPercent, barIdx) => {
+                      const isFilled = barIdx < barsToFill;
+                      const isCurrentBar =
+                        isPlayingChunk && barIdx === barsToFill;
+
+                      let barColor;
+                      if (isFailed) {
+                        barColor = '#ff3b30';
+                      } else if (isPlayingChunk) {
+                        barColor =
+                          isFilled || isCurrentBar
+                            ? '#34c759'
+                            : 'rgba(52, 199, 89, 0.3)';
+                      } else if (isPlayed) {
+                        barColor = '#007AFF';
+                      } else {
+                        barColor = 'rgba(255, 255, 255, 0.25)';
+                      }
+
+                      return (
+                        <div
+                          key={barIdx}
+                          style={{
+                            width: `${BAR_WIDTH}px`,
+                            height: `${heightPercent}%`,
+                            backgroundColor: barColor,
+                            borderRadius: '2px',
+                            transition: 'background-color 0.15s, height 0.1s',
+                            minHeight: '4px',
+                          }}
+                        />
+                      );
+                    })}
+
+                    {/* Chunk number overlay (subtle) */}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        bottom: '2px',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        fontSize: '8px',
+                        color: 'rgba(255, 255, 255, 0.4)',
+                        fontWeight: isPlayingChunk ? '600' : '400',
+                      }}
+                    >
+                      {chunkIndex + 1}
+                    </div>
                   </div>
                 );
               })}
@@ -248,33 +309,11 @@ export default function CallConnectedView({
                 bottom: 0,
                 width: '2px',
                 backgroundColor: '#fff',
-                boxShadow: '0 0 4px rgba(255, 255, 255, 0.8)',
+                boxShadow: '0 0 6px rgba(255, 255, 255, 0.9)',
                 zIndex: 10,
                 pointerEvents: 'none',
               }}
             />
-
-            {/* Progress indicator for current chunk */}
-            {currentPlayingChunkId &&
-              (() => {
-                const currentIndex = playbackChunks.findIndex(
-                  (c) => c.id === currentPlayingChunkId,
-                );
-                if (currentIndex === -1) return null;
-                return (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: `${currentIndex * 80}px`,
-                      width: `${80 * currentChunkProgress}px`,
-                      height: '100%',
-                      backgroundColor: 'rgba(255, 255, 255, 0.4)',
-                      zIndex: 5,
-                      pointerEvents: 'none',
-                    }}
-                  />
-                );
-              })()}
           </div>
 
           {/* Info Text */}
@@ -291,11 +330,9 @@ export default function CallConnectedView({
                   playbackChunks.findIndex(
                     (c) => c.id === currentPlayingChunkId,
                   ) + 1
-                } of ${playbackChunks.length} (${Math.round(
-                  currentChunkProgress * 100,
-                )}%)`
+                } of ${playbackChunks.length}`
               : playbackChunks.length > 0
-              ? `Ready to play ${playbackChunks.length} chunks`
+              ? `Tap to play ${playbackChunks.length} chunks`
               : 'No chunks available'}
           </div>
         </div>
@@ -337,37 +374,17 @@ export default function CallConnectedView({
           >
             {isPlaying ? (
               // Pause icon
-              <svg
-                width='24'
-                height='24'
-                viewBox='0 0 24 24'
-                fill='none'
-                stroke='white'
-                strokeWidth='2'
-                strokeLinecap='round'
-                strokeLinejoin='round'
-              >
+              <svg width='24' height='24' viewBox='0 0 24 24' fill='white'>
                 <rect x='6' y='4' width='4' height='16' />
                 <rect x='14' y='4' width='4' height='16' />
               </svg>
             ) : (
               // Play icon
-              <svg
-                version='1.1'
-                xmlns='http://www.w3.org/2000/svg'
-                xmlnsXlink='http://www.w3.org/1999/xlink'
-                x='0px'
-                y='0px'
-                width='24'
-                height='24'
-                viewBox='0 0 330 330'
-                style={{ enableBackground: 'new 0 0 330 330' }}
-                xmlSpace='preserve'
-              >
+              <svg width='24' height='24' viewBox='0 0 330 330'>
                 <path
                   d='M37.728,328.12c2.266,1.256,4.77,1.88,7.272,1.88c2.763,0,5.522-0.763,7.95-2.28l240-149.999
-	c4.386-2.741,7.05-7.548,7.05-12.72c0-5.172-2.664-9.979-7.05-12.72L52.95,2.28c-4.625-2.891-10.453-3.043-15.222-0.4
-	C32.959,4.524,30,9.547,30,15v300C30,320.453,32.959,325.476,37.728,328.12z'
+                  c4.386-2.741,7.05-7.548,7.05-12.72c0-5.172-2.664-9.979-7.05-12.72L52.95,2.28c-4.625-2.891-10.453-3.043-15.222-0.4
+                  C32.959,4.524,30,9.547,30,15v300C30,320.453,32.959,325.476,37.728,328.12z'
                   fill='white'
                 />
               </svg>
@@ -385,15 +402,11 @@ export default function CallConnectedView({
             width='24px'
             height='24px'
             viewBox='0 0 24 24'
-            id='end_call'
-            data-name='end call'
             xmlns='http://www.w3.org/2000/svg'
-            aria-hidden='true'
           >
-            <rect id='placer' width='24' height='24' fill='none' />
-            <g id='Group' transform='translate(2 8)'>
+            <rect width='24' height='24' fill='none' />
+            <g transform='translate(2 8)'>
               <path
-                id='Shape'
                 d='M7.02,15.976,5.746,13.381a.7.7,0,0,0-.579-.407l-1.032-.056a.662.662,0,0,1-.579-.437,9.327,9.327,0,0,1,0-6.5.662.662,0,0,1,.579-.437l1.032-.109a.7.7,0,0,0,.589-.394L7.03,2.446l.331-.662a.708.708,0,0,0,.07-.308.692.692,0,0,0-.179-.467A3,3,0,0,0,4.693.017l-.235.03L4.336.063A1.556,1.556,0,0,0,4.17.089l-.162.04C1.857.679.165,4.207,0,8.585V9.83c.165,4.372,1.857,7.9,4,8.483l.162.04a1.556,1.556,0,0,0,.165.026l.122.017.235.03a3,3,0,0,0,2.558-.993.692.692,0,0,0,.179-.467.708.708,0,0,0-.07-.308Z'
                 transform='translate(18.936 0.506) rotate(90)'
                 fill='white'
