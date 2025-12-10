@@ -1778,3 +1778,123 @@ export async function getUserCallPartner(phoneNumber) {
     return null;
   }
 }
+
+// ============================================================================
+// STATE LOGGING FOR DUAL TIMELINE
+// ============================================================================
+// These functions log user online/offline state changes to the database
+// so the other user can see when you went offline/online on their timeline.
+
+/**
+ * Log a state change to the database
+ * @param {string} callId - The call ID
+ * @param {string} phoneNumber - The user's phone number
+ * @param {string} state - 'recording' or 'playback'
+ * @param {boolean} isOnline - Whether the user is online
+ */
+export async function logUserStateChange(callId, phoneNumber, state, isOnline) {
+  if (!supabase || !callId || !phoneNumber) {
+    console.warn('[logUserStateChange] Missing required params', {
+      callId,
+      phoneNumber,
+    });
+    return null;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('call_state_log')
+      .insert({
+        call_id: callId,
+        phone_number: normalizePhoneNumber(phoneNumber),
+        state,
+        is_online: isOnline,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      // Table might not exist - log warning but don't throw
+      console.warn(
+        '[logUserStateChange] Error (table may not exist)',
+        error.message,
+      );
+      return null;
+    }
+
+    console.log('[logUserStateChange] ✅ Logged state change', {
+      callId,
+      phoneNumber,
+      state,
+      isOnline,
+      id: data?.id,
+    });
+
+    return data;
+  } catch (err) {
+    console.warn('[logUserStateChange] Failed', err);
+    return null;
+  }
+}
+
+/**
+ * Fetch all state log entries for a call
+ * @param {string} callId - The call ID
+ * @returns {Promise<Array>} Array of state log entries
+ */
+export async function fetchStateLogForCall(callId) {
+  if (!supabase || !callId) return [];
+
+  try {
+    const { data, error } = await supabase
+      .from('call_state_log')
+      .select('*')
+      .eq('call_id', callId)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.warn('[fetchStateLogForCall] Error', error.message);
+      return [];
+    }
+
+    return data || [];
+  } catch (err) {
+    console.warn('[fetchStateLogForCall] Failed', err);
+    return [];
+  }
+}
+
+/**
+ * Subscribe to state log changes for a call (real-time)
+ * @param {string} callId - The call ID
+ * @param {function} callback - Called with new state log entry
+ * @returns {function} Unsubscribe function
+ */
+export function subscribeToStateLog(callId, callback) {
+  if (!supabase || !callId) {
+    return () => {};
+  }
+
+  const channelName = `state-log-${callId}`;
+
+  const subscription = supabase
+    .channel(channelName)
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'call_state_log',
+        filter: `call_id=eq.${callId}`,
+      },
+      (payload) => {
+        console.log('[subscribeToStateLog] New state log entry', payload.new);
+        if (callback) callback(payload.new);
+      },
+    )
+    .subscribe();
+
+  return () => {
+    subscription.unsubscribe().catch(() => {});
+  };
+}

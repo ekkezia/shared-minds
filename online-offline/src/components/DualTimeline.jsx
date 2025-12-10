@@ -90,57 +90,97 @@ export default function DualTimeline({
       });
     }
 
-    // Build other user's timeline from their chunks
-    // IMPROVED: Infer offline periods from gaps between chunks
-    // Each chunk represents ~20 seconds of recording
-    // If there's a gap > 25 seconds between chunks, they were likely offline
+    // Build other user's timeline from state history (from database)
+    // If no state history available, fall back to inferring from chunks
     const otherSegments = [];
-    const otherChunks = chunks
-      .filter((c) => normalize(c.from_number || '') !== myNorm)
-      .sort((a, b) => {
-        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
-        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
-        return timeA - timeB;
-      });
-
     const otherJoinOffset = isCaller ? recipientJoinOffset : 0;
     const RECORDING_DURATION = 20; // Each recording is ~20 seconds
-    const GAP_THRESHOLD = 25; // If gap > 25s, likely was offline
 
-    if (otherChunks.length > 0) {
+    // Check if we have state history from the database
+    if (otherStateHistory && otherStateHistory.length > 0) {
+      // Use actual state history from database
+      let otherCurrentState = 'recording'; // Default: start recording
       let otherLastTime = otherJoinOffset;
 
-      otherChunks.forEach((chunk, idx) => {
-        const chunkTime = chunk.created_at
-          ? toUniversalTime(chunk.created_at)
-          : otherLastTime;
-        const chunkEndTime = chunkTime + RECORDING_DURATION;
+      const sortedOtherHistory = [...otherStateHistory].sort(
+        (a, b) =>
+          new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+      );
 
-        // Check for gap (offline period)
-        if (idx > 0 && chunkTime > otherLastTime) {
-          const gap = chunkTime - otherLastTime;
-          if (gap > GAP_THRESHOLD) {
-            // Large gap = they were offline (playback mode)
-            otherSegments.push({
-              startTime: otherLastTime,
-              endTime: chunkTime,
-              state: 'playback',
-            });
-          } else {
-            // Small gap = still recording (maybe upload delay)
-            // Extend the previous recording segment
-          }
+      sortedOtherHistory.forEach((event) => {
+        const eventTime = toUniversalTime(event.timestamp);
+        // Add segment from last time to this event
+        if (eventTime > otherLastTime) {
+          otherSegments.push({
+            startTime: otherLastTime,
+            endTime: eventTime,
+            state: otherCurrentState,
+          });
         }
+        otherCurrentState = event.state;
+        otherLastTime = eventTime;
+      });
 
-        // Add recording segment for this chunk
+      // Add final segment (from last event to now or last chunk time)
+      const otherChunks = chunks.filter(
+        (c) => normalize(c.from_number || '') !== myNorm,
+      );
+      const otherLastChunkTime =
+        otherChunks.length > 0 && otherChunks[otherChunks.length - 1].created_at
+          ? toUniversalTime(otherChunks[otherChunks.length - 1].created_at) +
+            RECORDING_DURATION
+          : otherLastTime + 10;
+      if (otherLastTime < otherLastChunkTime) {
         otherSegments.push({
-          startTime: Math.max(chunkTime, otherLastTime),
-          endTime: chunkEndTime,
-          state: 'recording',
+          startTime: otherLastTime,
+          endTime: otherLastChunkTime,
+          state: otherCurrentState,
+        });
+      }
+    } else {
+      // Fallback: Infer offline periods from gaps between chunks
+      const otherChunks = chunks
+        .filter((c) => normalize(c.from_number || '') !== myNorm)
+        .sort((a, b) => {
+          const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return timeA - timeB;
         });
 
-        otherLastTime = chunkEndTime;
-      });
+      const GAP_THRESHOLD = 25; // If gap > 25s, likely was offline
+
+      if (otherChunks.length > 0) {
+        let otherLastTime = otherJoinOffset;
+
+        otherChunks.forEach((chunk, idx) => {
+          const chunkTime = chunk.created_at
+            ? toUniversalTime(chunk.created_at)
+            : otherLastTime;
+          const chunkEndTime = chunkTime + RECORDING_DURATION;
+
+          // Check for gap (offline period)
+          if (idx > 0 && chunkTime > otherLastTime) {
+            const gap = chunkTime - otherLastTime;
+            if (gap > GAP_THRESHOLD) {
+              // Large gap = they were offline (playback mode)
+              otherSegments.push({
+                startTime: otherLastTime,
+                endTime: chunkTime,
+                state: 'playback',
+              });
+            }
+          }
+
+          // Add recording segment for this chunk
+          otherSegments.push({
+            startTime: Math.max(chunkTime, otherLastTime),
+            endTime: chunkEndTime,
+            state: 'recording',
+          });
+
+          otherLastTime = chunkEndTime;
+        });
+      }
     }
 
     return { mySegments, otherSegments, myJoinOffset, otherJoinOffset };

@@ -40,6 +40,9 @@ import {
   fetchActiveCallId,
   fetchAudioChunksFromOppositeParty,
   setUploadProgressCallback,
+  logUserStateChange,
+  fetchStateLogForCall,
+  subscribeToStateLog,
 } from './services/audioService.js';
 import useOnlineStatus from './hooks/useOnlineStatus.js';
 
@@ -1119,6 +1122,74 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, currentCall?.id, myPhoneNumber]);
 
+  // Subscribe to other user's state changes for DualTimeline visualization
+  useEffect(() => {
+    if (!currentCall?.id || !myPhoneNumber) return;
+
+    // Only subscribe when in calling or connected view
+    if (view !== 'calling' && view !== 'connected') return;
+
+    const callId = currentCall.id;
+    const myNorm = normalizeNumber(myPhoneNumber);
+
+    console.log('[App] 📡 Setting up state log subscription', {
+      callId,
+      myPhoneNumber,
+      view,
+    });
+
+    // Fetch existing state logs first
+    (async () => {
+      try {
+        const logs = await fetchStateLogForCall(callId);
+        console.log('[App] 📜 Fetched state logs', {
+          callId,
+          count: logs.length,
+          logs,
+        });
+
+        // Update other user's state history from logs
+        const otherUserLogs = logs.filter(
+          (log) => normalizeNumber(log.phone_number) !== myNorm,
+        );
+
+        if (otherUserLogs.length > 0) {
+          otherStateHistoryRef.current = otherUserLogs.map((log) => ({
+            timestamp: log.created_at,
+            state: log.state,
+            isOnline: log.is_online,
+          }));
+          console.log('[App] 📊 Updated other user state history from logs', {
+            count: otherUserLogs.length,
+            history: otherStateHistoryRef.current,
+          });
+        }
+      } catch (err) {
+        console.warn('[App] Failed to fetch state logs', err);
+      }
+    })();
+
+    // Subscribe to new state log entries
+    const unsubscribe = subscribeToStateLog(callId, (newLog) => {
+      const logPhoneNorm = normalizeNumber(newLog.phone_number);
+
+      // Only track other user's state changes
+      if (logPhoneNorm !== myNorm) {
+        console.log('[App] 📥 New state log from other user', newLog);
+        otherStateHistoryRef.current.push({
+          timestamp: newLog.created_at,
+          state: newLog.state,
+          isOnline: newLog.is_online,
+        });
+      }
+    });
+
+    return () => {
+      console.log('[App] 🔌 Cleaning up state log subscription');
+      unsubscribe();
+    };
+  }, [currentCall?.id, myPhoneNumber, view]);
+
   // Play cached audio when entering 'connected' view (offline)
   useEffect(() => {
     // This log should ALWAYS appear when the effect runs
@@ -1844,6 +1915,15 @@ export default function App() {
           state: 'playback',
           isOnline: false,
         });
+
+        // Log state change to database for other user to see
+        logUserStateChange(
+          currentCall.id,
+          myPhoneNumber,
+          'playback',
+          false,
+        ).catch(() => {});
+
         // Don't reset chunkIndex when going offline - we'll resume from where we left off
         stopRecording(false); // false = preserve chunkIndex
         // Clear upload progress callback
@@ -1867,6 +1947,15 @@ export default function App() {
           state: 'recording',
           isOnline: true,
         });
+
+        // Log state change to database for other user to see
+        logUserStateChange(
+          currentCall.id,
+          myPhoneNumber,
+          'recording',
+          true,
+        ).catch(() => {});
+
         setView('calling');
 
         // Only restart recording if we haven't uploaded yet for this online session
@@ -2396,6 +2485,15 @@ export default function App() {
             state: 'playback',
             isOnline: false,
           });
+
+          // Log state change to database for other user to see
+          logUserStateChange(
+            currentCall.id,
+            myPhoneNumber,
+            'playback',
+            false,
+          ).catch(() => {});
+
           // Don't reset chunkIndex when going offline - we'll resume from where we left off
           stopRecording(false); // false = preserve chunkIndex
           // Clear upload progress callback
@@ -2583,6 +2681,11 @@ export default function App() {
       state: 'recording',
       isOnline: isOnline,
     });
+
+    // Log initial state to database
+    logUserStateChange(callId, myPhoneNumber, 'recording', isOnline).catch(
+      () => {},
+    );
 
     try {
       await startRecording(callId, myPhoneNumber);
@@ -2900,6 +3003,14 @@ export default function App() {
         state: 'recording',
         isOnline: isOnline,
       });
+
+      // Log initial state to database
+      logUserStateChange(
+        callRow.id,
+        myPhoneNumber,
+        'recording',
+        isOnline,
+      ).catch(() => {});
 
       try {
         await startRecording(callRow.id, myPhoneNumber);
