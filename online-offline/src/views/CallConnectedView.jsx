@@ -154,28 +154,23 @@ export default function CallConnectedView({
               const scrollX = timelineRef.current.scrollLeft;
               const totalX = clickX + scrollX;
 
-              // Calculate which chunk was clicked
+              // Calculate which chunk was clicked (0-based index)
               const chunkIndex = Math.floor(totalX / 80);
-              const progressInChunk = Math.max(
-                0,
-                Math.min(1, (totalX % 80) / 80),
-              );
 
               if (chunkIndex >= 0 && chunkIndex < playbackChunks.length) {
-                console.log('[CallConnectedView] Seeking to chunk', {
+                console.log('[CallConnectedView] Clicked chunk', {
                   chunkIndex,
-                  progressInChunk,
+                  displayNumber: chunkIndex + 1, // 1-based for display
                   chunkId: playbackChunks[chunkIndex].id,
                   wasPlaying: isPlaying,
                 });
-                const wasPlaying = isPlaying;
-                playbackController.seek(chunkIndex, progressInChunk);
-                // Resume playback if it was playing
-                if (wasPlaying) {
-                  setTimeout(() => {
-                    playbackController.play();
-                  }, 100);
-                }
+
+                // Seek to the clicked chunk and always start playing
+                playbackController.seek(chunkIndex, 0);
+                // Always start playback after clicking on a chunk
+                setTimeout(() => {
+                  playbackController.play();
+                }, 150);
               }
             }}
           >

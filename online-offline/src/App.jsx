@@ -217,6 +217,7 @@ export default function App() {
   const isPlayingRef = useRef(false); // Ref to track playing state for closures
   const lastOfflineTimestampRef = useRef(null); // Track when we last went offline (to find first chunk of current online session)
   const firstChunkOfCurrentSessionRef = useRef(null); // Track the first chunk ID of the current online session
+  const seekTargetIndexRef = useRef(null); // Track the target chunk index after seek (null = use default)
 
   // Track state history for dual timeline visualization
   const myStateHistoryRef = useRef([]); // Array of {timestamp, state: 'recording'|'playback', isOnline}
@@ -1105,6 +1106,7 @@ export default function App() {
     // Reset playback state
     setCurrentPlayingChunkId(null);
     setCurrentChunkProgress(0);
+    seekTargetIndexRef.current = null; // Reset seek target
 
     // Fetch all chunks from IndexedDB cache (offline mode)
     (async () => {
@@ -1283,22 +1285,25 @@ export default function App() {
               }
             }
 
-            // Find the first unplayed chunk or continue from current
-            // Start from the first chunk of the current online session
-            let startIndex = firstChunkIndex;
-            if (currentPlayingChunkId) {
-              const currentIndex = otherPartyChunks.findIndex(
-                (c) => c.id === currentPlayingChunkId,
-              );
-              if (currentIndex !== -1 && currentIndex >= firstChunkIndex) {
-                startIndex = currentIndex;
-              }
+            // Determine start index:
+            // 1. If seekTargetIndexRef is set, use that (from seek())
+            // 2. Otherwise, start from first chunk (index 0) for simplicity
+            let startIndex = 0;
+            if (seekTargetIndexRef.current !== null) {
+              startIndex = seekTargetIndexRef.current;
+              // Clear the seek target after using it
+              seekTargetIndexRef.current = null;
             }
+
+            // Ensure startIndex is valid
+            if (startIndex < 0 || startIndex >= otherPartyChunks.length) {
+              startIndex = 0;
+            }
+
             console.log('[App] Starting playback from chunk index', {
               startIndex,
-              firstChunkIndex,
-              currentPlayingChunkId,
               totalChunks: otherPartyChunks.length,
+              chunkAtIndex: otherPartyChunks[startIndex]?.id,
             });
 
             // Play chunks in order starting from startIndex
@@ -1609,7 +1614,6 @@ export default function App() {
               try {
                 currentAudioRef.current.pause();
                 currentAudioRef.current.currentTime = 0;
-                // Remove all event listeners by creating a new audio element
                 currentAudioRef.current = null;
               } catch (e) {
                 console.warn('[App] Error cleaning up audio during seek', e);
@@ -1622,7 +1626,7 @@ export default function App() {
             setIsPlaying(false);
             isPlayingRef.current = false;
 
-            // Clear played chunks from this point forward
+            // Validate chunk index
             const targetChunk = otherPartyChunks[chunkIndex];
             if (!targetChunk) {
               console.warn('[App] Invalid chunk index for seek', {
@@ -1631,6 +1635,13 @@ export default function App() {
               });
               return;
             }
+
+            // Set the seek target so play() knows where to start
+            seekTargetIndexRef.current = chunkIndex;
+            console.log('[App] Set seek target', {
+              chunkIndex,
+              chunkId: targetChunk.id,
+            });
 
             // Mark chunks before target as played
             for (let i = 0; i < chunkIndex; i++) {
@@ -1649,7 +1660,7 @@ export default function App() {
             // Reset abort flag for new playback
             playbackAbortRef.current = false;
 
-            // Set current position
+            // Set current position in UI
             setCurrentPlayingChunkId(targetChunk.id);
             setCurrentChunkProgress(progress);
 
@@ -1664,7 +1675,7 @@ export default function App() {
                     );
                   });
                 }
-              }, 200); // Give time for cleanup
+              }, 200);
             }
           },
         };
