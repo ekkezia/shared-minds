@@ -1,7 +1,118 @@
 // src/views/IncomingCallView.jsx
-import { useEffect } from 'preact/hooks';
+import { useEffect, useRef } from 'preact/hooks';
 
 export default function IncomingCallView({ call, onAccept, onReject }) {
+  const audioContextRef = useRef(null);
+  const oscillatorRef = useRef(null);
+  const gainNodeRef = useRef(null);
+  const ringIntervalRef = useRef(null);
+
+  // Generate and play ringing sound
+  useEffect(() => {
+    // Create audio context if not exists
+    if (!audioContextRef.current) {
+      try {
+        audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      } catch (e) {
+        console.warn('[IncomingCallView] AudioContext not supported', e);
+        return;
+      }
+    }
+
+    const audioContext = audioContextRef.current;
+    
+    // Resume audio context if suspended (browsers require user interaction)
+    if (audioContext.state === 'suspended') {
+      audioContext.resume().catch((e) => {
+        console.warn('[IncomingCallView] Could not resume audio context', e);
+      });
+    }
+
+    let isPlaying = false;
+
+    // Function to play a single ring tone (two alternating frequencies like a real phone)
+    const playRingTone = () => {
+      if (isPlaying) return;
+      isPlaying = true;
+
+      try {
+        const now = audioContext.currentTime;
+        const ringDuration = 0.4; // Each tone lasts 0.4 seconds
+        const pauseDuration = 0.2; // Pause between tones
+        const totalDuration = ringDuration * 2 + pauseDuration; // Two tones with pause
+
+        // First tone (440Hz)
+        const osc1 = audioContext.createOscillator();
+        const gain1 = audioContext.createGain();
+        osc1.connect(gain1);
+        gain1.connect(audioContext.destination);
+        osc1.frequency.setValueAtTime(440, now);
+        osc1.type = 'sine';
+        gain1.gain.setValueAtTime(0, now);
+        gain1.gain.linearRampToValueAtTime(0.25, now + 0.05);
+        gain1.gain.linearRampToValueAtTime(0.25, now + ringDuration - 0.05);
+        gain1.gain.linearRampToValueAtTime(0, now + ringDuration);
+        osc1.start(now);
+        osc1.stop(now + ringDuration);
+
+        // Second tone (480Hz) - starts after first tone + pause
+        const osc2 = audioContext.createOscillator();
+        const gain2 = audioContext.createGain();
+        osc2.connect(gain2);
+        gain2.connect(audioContext.destination);
+        osc2.frequency.setValueAtTime(480, now);
+        osc2.type = 'sine';
+        gain2.gain.setValueAtTime(0, now + ringDuration + pauseDuration);
+        gain2.gain.linearRampToValueAtTime(0.25, now + ringDuration + pauseDuration + 0.05);
+        gain2.gain.linearRampToValueAtTime(0.25, now + totalDuration - 0.05);
+        gain2.gain.linearRampToValueAtTime(0, now + totalDuration);
+        osc2.start(now + ringDuration + pauseDuration);
+        osc2.stop(now + totalDuration);
+
+        // Clean up when second tone ends
+        osc2.onended = () => {
+          isPlaying = false;
+        };
+
+        oscillatorRef.current = osc2; // Keep reference to last oscillator
+        gainNodeRef.current = gain2;
+      } catch (e) {
+        console.warn('[IncomingCallView] Error playing ring tone', e);
+        isPlaying = false;
+      }
+    };
+
+    // Play ring tone immediately, then repeat every 2 seconds (typical phone ring pattern)
+    playRingTone();
+    ringIntervalRef.current = setInterval(() => {
+      playRingTone();
+    }, 2000); // Ring every 2 seconds
+
+    // Cleanup function
+    return () => {
+      if (ringIntervalRef.current) {
+        clearInterval(ringIntervalRef.current);
+        ringIntervalRef.current = null;
+      }
+      if (oscillatorRef.current) {
+        try {
+          oscillatorRef.current.stop();
+        } catch (e) {
+          // Ignore errors if already stopped
+        }
+        oscillatorRef.current = null;
+      }
+      if (gainNodeRef.current) {
+        try {
+          gainNodeRef.current.disconnect();
+        } catch (e) {
+          // Ignore errors
+        }
+        gainNodeRef.current = null;
+      }
+    };
+  }, [call]);
+
   useEffect(() => {
     // auto-timeout after 30s if not accepted
     const t = setTimeout(() => {
