@@ -188,6 +188,11 @@ export default function CallingView({
 }) {
   const [recordingTime, setRecordingTime] = useState(0);
 
+  // Debug: log callDuration changes
+  useEffect(() => {
+    console.log('[CallingView] ⏱️ callDuration received:', callDuration);
+  }, [callDuration]);
+
   // Track recording time (countdown from 20 seconds)
   useEffect(() => {
     if (!isOnline) {

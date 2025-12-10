@@ -51,6 +51,145 @@ import useOnlineStatus from './hooks/useOnlineStatus.js';
 // uid helper
 const uid = () => Math.random().toString(36).slice(2, 10);
 
+// Fullscreen prompt component
+function FullscreenPrompt({ onEnterFullscreen, onDismiss }) {
+  const handleFullscreen = async () => {
+    try {
+      const elem = document.documentElement;
+      // @ts-ignore - vendor prefixed fullscreen methods
+      const requestFS =
+        elem.requestFullscreen ||
+        elem.webkitRequestFullscreen ||
+        elem.msRequestFullscreen;
+      if (requestFS) {
+        await requestFS.call(elem);
+      }
+      onEnterFullscreen();
+    } catch (err) {
+      console.warn('Fullscreen request failed:', err);
+      // Still dismiss the prompt even if fullscreen fails
+      onDismiss();
+    }
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.85)',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 10000,
+        padding: '20px',
+        fontFamily:
+          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      }}
+    >
+      <div
+        style={{
+          backgroundColor: '#1a1a1a',
+          borderRadius: '20px',
+          padding: '32px 24px',
+          maxWidth: '320px',
+          width: '100%',
+          textAlign: 'center',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+        }}
+      >
+        {/* Phone icon */}
+        <div
+          style={{
+            fontSize: '48px',
+            marginBottom: '16px',
+          }}
+        >
+          📱
+        </div>
+
+        <h2
+          style={{
+            color: '#fff',
+            fontSize: '20px',
+            fontWeight: '600',
+            marginBottom: '12px',
+            margin: '0 0 12px 0',
+          }}
+        >
+          Best Experience in Fullscreen
+        </h2>
+
+        <p
+          style={{
+            color: 'rgba(255, 255, 255, 0.7)',
+            fontSize: '14px',
+            lineHeight: '1.5',
+            marginBottom: '24px',
+            margin: '0 0 24px 0',
+          }}
+        >
+          For the most immersive phone call experience, we recommend using
+          fullscreen mode.
+        </p>
+
+        <button
+          onClick={handleFullscreen}
+          style={{
+            width: '100%',
+            padding: '14px 20px',
+            fontSize: '16px',
+            fontWeight: '600',
+            color: '#fff',
+            backgroundColor: '#34C759',
+            border: 'none',
+            borderRadius: '12px',
+            cursor: 'pointer',
+            marginBottom: '12px',
+            transition: 'transform 0.1s, opacity 0.1s',
+          }}
+          onMouseDown={(e) => {
+            /** @type {HTMLButtonElement} */ (e.target).style.transform =
+              'scale(0.98)';
+          }}
+          onMouseUp={(e) => {
+            /** @type {HTMLButtonElement} */ (e.target).style.transform =
+              'scale(1)';
+          }}
+          onMouseLeave={(e) => {
+            /** @type {HTMLButtonElement} */ (e.target).style.transform =
+              'scale(1)';
+          }}
+        >
+          Enter Fullscreen
+        </button>
+
+        <button
+          onClick={onDismiss}
+          style={{
+            width: '100%',
+            padding: '12px 20px',
+            fontSize: '14px',
+            fontWeight: '500',
+            color: 'rgba(255, 255, 255, 0.6)',
+            backgroundColor: 'transparent',
+            border: '1px solid rgba(255, 255, 255, 0.2)',
+            borderRadius: '12px',
+            cursor: 'pointer',
+            transition: 'opacity 0.1s',
+          }}
+        >
+          Continue Without Fullscreen
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   // Use shared normalization function for consistency
   const normalizeNumber = normalizePhoneNumber;
@@ -106,6 +245,26 @@ export default function App() {
 
   const [view, setViewState] = useState(restoreView); // setup|dialer|incoming|calling|connected|end
   const viewRef = useRef(view); // Keep a ref to current view for callbacks
+
+  // Fullscreen prompt state - check if user has already dismissed it
+  const [showFullscreenPrompt, setShowFullscreenPrompt] = useState(() => {
+    // Don't show if already in fullscreen
+    if (document.fullscreenElement) return false;
+    // Don't show if user has already dismissed it this session
+    if (sessionStorage.getItem('fullscreenPromptDismissed')) return false;
+    // Show the prompt
+    return true;
+  });
+
+  const handleEnterFullscreen = () => {
+    setShowFullscreenPrompt(false);
+    sessionStorage.setItem('fullscreenPromptDismissed', 'true');
+  };
+
+  const handleDismissFullscreen = () => {
+    setShowFullscreenPrompt(false);
+    sessionStorage.setItem('fullscreenPromptDismissed', 'true');
+  };
 
   // Wrapper to update both state and ref, and persist to sessionStorage
   const setView = (newView) => {
@@ -552,64 +711,86 @@ export default function App() {
   // Call duration timer - starts when call becomes active, persists across view changes
   useEffect(() => {
     const callStatus = String(currentCall?.status || '').toLowerCase();
+    const callId = currentCall?.id;
+    const acceptedAt = currentCall?.accepted_at;
 
-    if (callStatus === 'active' && !callStartTimeRef.current) {
-      // Call just became active - start the timer
-      // Use accepted_at if available, otherwise use current time
-      const startTime = currentCall?.accepted_at
-        ? new Date(currentCall.accepted_at).getTime()
-        : Date.now();
-      callStartTimeRef.current = startTime;
+    console.log('[App] ⏱️ Timer effect running', {
+      callStatus,
+      callId,
+      acceptedAt,
+      hasStartTimeRef: !!callStartTimeRef.current,
+      hasTimerInterval: !!callTimerIntervalRef.current,
+    });
 
-      // Calculate initial duration (in case we're restoring state)
-      const initialDuration = Math.floor((Date.now() - startTime) / 1000);
-      setCallDuration(Math.max(0, initialDuration));
+    if (callStatus === 'active' && callId) {
+      // Call is active - start or continue the timer
+      if (!callStartTimeRef.current) {
+        // Timer not started yet - start it now
+        const startTime = acceptedAt
+          ? new Date(acceptedAt).getTime()
+          : Date.now();
+        callStartTimeRef.current = startTime;
 
-      console.log('[App] ⏱️ Call timer started', {
-        callId: currentCall?.id,
-        startTime: new Date(startTime).toISOString(),
-        initialDuration,
-      });
+        // Calculate initial duration (in case we're restoring state)
+        const initialDuration = Math.floor((Date.now() - startTime) / 1000);
+        setCallDuration(Math.max(0, initialDuration));
 
-      // Start interval to update duration every second
-      callTimerIntervalRef.current = setInterval(() => {
-        if (callStartTimeRef.current) {
-          const elapsed = Math.floor(
-            (Date.now() - callStartTimeRef.current) / 1000,
-          );
-          setCallDuration(elapsed);
-        }
-      }, 1000);
-    } else if (callStatus !== 'active' && callStartTimeRef.current) {
-      // Call ended or changed status - stop the timer
-      console.log('[App] ⏱️ Call timer stopped', {
-        callId: currentCall?.id,
-        finalDuration: callDuration,
-      });
+        console.log('[App] ⏱️ Call timer STARTED', {
+          callId,
+          startTime: new Date(startTime).toISOString(),
+          initialDuration,
+          acceptedAt,
+        });
+      }
 
+      // Ensure interval is running
+      if (!callTimerIntervalRef.current) {
+        callTimerIntervalRef.current = setInterval(() => {
+          if (callStartTimeRef.current) {
+            const elapsed = Math.floor(
+              (Date.now() - callStartTimeRef.current) / 1000,
+            );
+            setCallDuration(elapsed);
+          }
+        }, 1000);
+        console.log('[App] ⏱️ Timer interval started');
+      }
+    } else if (callStatus !== 'active' || !callId) {
+      // Call not active or no call - stop the timer
       if (callTimerIntervalRef.current) {
+        console.log('[App] ⏱️ Call timer STOPPED', {
+          callId,
+          callStatus,
+          finalDuration: callDuration,
+        });
         clearInterval(callTimerIntervalRef.current);
         callTimerIntervalRef.current = null;
       }
-      callStartTimeRef.current = null;
-      // Don't reset callDuration here - let it persist for EndCallView
-    } else if (!currentCall) {
-      // No call - reset everything
-      if (callTimerIntervalRef.current) {
-        clearInterval(callTimerIntervalRef.current);
-        callTimerIntervalRef.current = null;
+
+      if (!callId) {
+        // No call at all - reset everything
+        callStartTimeRef.current = null;
+        setCallDuration(0);
+      } else {
+        // Call exists but not active (ended/rejected) - keep duration but clear start time
+        callStartTimeRef.current = null;
       }
-      callStartTimeRef.current = null;
-      setCallDuration(0);
     }
 
     return () => {
-      // Cleanup on unmount
-      if (callTimerIntervalRef.current) {
-        clearInterval(callTimerIntervalRef.current);
-      }
+      // Cleanup on unmount only - don't clear on re-render
     };
   }, [currentCall?.status, currentCall?.id, currentCall?.accepted_at]);
+
+  // Cleanup timer on component unmount
+  useEffect(() => {
+    return () => {
+      if (callTimerIntervalRef.current) {
+        clearInterval(callTimerIntervalRef.current);
+        callTimerIntervalRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     // keep refs to subscriptions so we can cleanup precisely
@@ -2664,6 +2845,7 @@ export default function App() {
       to_username: userObj && userObj.username,
       other_number: number,
       direction: 'outgoing',
+      status: createdCall?.status || 'ringing', // Include status from DB
       created_at: createdCall?.created_at || Date.now(),
     };
     setCurrentCall(call);
@@ -3242,57 +3424,67 @@ export default function App() {
   // }, [myPhoneNumber]);
 
   return (
-    <PhoneContainer view={view} isOnline={view === 'calling' ? true : isOnline}>
-      {' '}
-      <StatusBar isOnline={isOnline} />
-      {view === 'setup' && <SetupView onDone={handleSetupDone} />}
-      {view === 'dialer' && (
-        <DialerView
-          onlineUsers={onlineUsers}
-          usersInCall={usersInCall}
-          userCallPartners={userCallPartners}
-          onStartCall={handleStartCall}
-          myUsername={myUsername}
-          myPhoneNumber={myPhoneNumber}
+    <>
+      {showFullscreenPrompt && (
+        <FullscreenPrompt
+          onEnterFullscreen={handleEnterFullscreen}
+          onDismiss={handleDismissFullscreen}
         />
       )}
-      {view === 'incoming' && currentCall && (
-        <IncomingCallView
-          call={currentCall}
-          onAccept={handleAccept}
-          onReject={handleReject}
-        />
-      )}
-      {view === 'calling' && currentCall && (
-        <CallingView
-          call={currentCall}
-          isOnline={isOnline}
-          onEnd={handleEnd}
-          audioStream={getCurrentAudioStream()}
-          uploadedChunksCount={uploadedChunksCount}
-          uploadStatus={uploadStatus}
-          myPhoneNumber={myPhoneNumber}
-          myUsername={myUsername}
-          callDuration={callDuration}
-        />
-      )}
-      {view === 'connected' && currentCall && (
-        <CallConnectedView
-          call={currentCall}
-          onEnd={handleEnd}
-          chunks={playbackChunks}
-          currentPlayingChunkId={currentPlayingChunkId}
-          currentChunkProgress={currentChunkProgress}
-          isPlaying={isPlaying}
-          playbackController={playbackController}
-          myPhoneNumber={myPhoneNumber}
-          callStartTime={currentCall.created_at}
-          myStateHistory={myStateHistory}
-          otherStateHistory={otherStateHistory}
-          callDuration={callDuration}
-        />
-      )}
-      {view === 'end' && <EndCallView onDone={handleEndDone} />}
-    </PhoneContainer>
+      <PhoneContainer
+        view={view}
+        isOnline={view === 'calling' ? true : isOnline}
+      >
+        <StatusBar isOnline={isOnline} />
+        {view === 'setup' && <SetupView onDone={handleSetupDone} />}
+        {view === 'dialer' && (
+          <DialerView
+            onlineUsers={onlineUsers}
+            usersInCall={usersInCall}
+            userCallPartners={userCallPartners}
+            onStartCall={handleStartCall}
+            myUsername={myUsername}
+            myPhoneNumber={myPhoneNumber}
+          />
+        )}
+        {view === 'incoming' && currentCall && (
+          <IncomingCallView
+            call={currentCall}
+            onAccept={handleAccept}
+            onReject={handleReject}
+          />
+        )}
+        {view === 'calling' && currentCall && (
+          <CallingView
+            call={currentCall}
+            isOnline={isOnline}
+            onEnd={handleEnd}
+            audioStream={getCurrentAudioStream()}
+            uploadedChunksCount={uploadedChunksCount}
+            uploadStatus={uploadStatus}
+            myPhoneNumber={myPhoneNumber}
+            myUsername={myUsername}
+            callDuration={callDuration}
+          />
+        )}
+        {view === 'connected' && currentCall && (
+          <CallConnectedView
+            call={currentCall}
+            onEnd={handleEnd}
+            chunks={playbackChunks}
+            currentPlayingChunkId={currentPlayingChunkId}
+            currentChunkProgress={currentChunkProgress}
+            isPlaying={isPlaying}
+            playbackController={playbackController}
+            myPhoneNumber={myPhoneNumber}
+            callStartTime={currentCall.created_at}
+            myStateHistory={myStateHistory}
+            otherStateHistory={otherStateHistory}
+            callDuration={callDuration}
+          />
+        )}
+        {view === 'end' && <EndCallView onDone={handleEndDone} />}
+      </PhoneContainer>
+    </>
   );
 }

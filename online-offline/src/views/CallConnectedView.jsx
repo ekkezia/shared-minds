@@ -44,6 +44,11 @@ export default function CallConnectedView({
 }) {
   const timelineRef = useRef(null);
 
+  // Debug: log callDuration changes
+  useEffect(() => {
+    console.log('[CallConnectedView] ⏱️ callDuration received:', callDuration);
+  }, [callDuration]);
+
   // Filter chunks to only show other party's chunks for the scrubber
   const normalize = (s) => String(s || '').replace(/\D/g, '');
   const myNorm = normalize(myPhoneNumber);
