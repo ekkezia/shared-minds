@@ -1844,10 +1844,13 @@ export default function App() {
                   // Update progress periodically
                   const progressInterval = setInterval(updateProgress, 100);
 
-                  // Timeout fallback - if chunk doesn't end within 7 seconds, move on (increased from 6s)
+                  // Timeout fallback - if chunk doesn't end within 25 seconds, move on
+                  // (recordings are 20 seconds, so allow 25s for buffer/loading time)
                   const timeoutId = setTimeout(() => {
-                    console.warn('[App] ⚠️ Chunk playback timeout', {
+                    console.warn('[App] ⚠️ Chunk playback timeout (25s)', {
                       chunkId: chunk.id,
+                      currentTime: audio.currentTime,
+                      duration: audio.duration,
                     });
                     clearInterval(progressInterval);
                     audio.pause();
@@ -1855,7 +1858,7 @@ export default function App() {
                     setCurrentPlayingChunkId(null);
                     currentAudioRef.current = null;
                     resolve();
-                  }, 7000);
+                  }, 25000);
 
                   audio.onloadedmetadata = () => {
                     console.log('[App] ✅ Chunk metadata loaded', {
