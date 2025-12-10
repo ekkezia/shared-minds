@@ -5,6 +5,13 @@ import DualTimeline from '../components/DualTimeline.jsx';
 // Number of bars per chunk
 const BARS_PER_CHUNK = 8;
 
+// Format duration as MM:SS
+function formatDuration(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
 // Generate random but consistent bar heights for a chunk
 function generateBarHeights(chunkId, count = BARS_PER_CHUNK) {
   // Use chunk ID as seed for consistent heights
@@ -33,6 +40,7 @@ export default function CallConnectedView({
   callStartTime = null,
   myStateHistory = [],
   otherStateHistory = [],
+  callDuration = 0, // Call duration in seconds (from App.jsx)
 }) {
   const timelineRef = useRef(null);
 
@@ -113,9 +121,24 @@ export default function CallConnectedView({
   return (
     <div class='screen dialer-screen'>
       <div class='caller-info'>
-        <div class='caller-name'>Call Connected (Offline Playback)</div>
+        <div class='caller-name'>Call Connected</div>
         <div class='caller-number'>{call.other_number}</div>
-        <div class='call-status'>
+
+        {/* Call Duration Timer - like a real phone call */}
+        <div
+          style={{
+            marginTop: '8px',
+            fontSize: '32px',
+            fontWeight: '300',
+            fontFamily: 'SF Mono, Monaco, Consolas, monospace',
+            color: '#fff',
+            letterSpacing: '2px',
+          }}
+        >
+          {formatDuration(callDuration)}
+        </div>
+
+        <div class='call-status' style={{ marginTop: '8px' }}>
           {chunks.length > 0
             ? `Playing ${playbackChunks.length} audio chunks...`
             : 'Loading audio chunks...'}

@@ -223,6 +223,11 @@ export default function App() {
   const myStateHistoryRef = useRef([]); // Array of {timestamp, state: 'recording'|'playback', isOnline}
   const otherStateHistoryRef = useRef([]); // Array of {timestamp, state: 'recording'|'playback'}
 
+  // Call duration timer - persists across view changes
+  const [callDuration, setCallDuration] = useState(0); // seconds since call started
+  const callStartTimeRef = useRef(null); // When the call became active
+  const callTimerIntervalRef = useRef(null); // Interval ID for the timer
+
   const isOnline = useOnlineStatus();
 
   // Helper function to process users list (extracted for reuse)
@@ -537,6 +542,68 @@ export default function App() {
 
     restoreCallState();
   }, [myPhoneNumber, isOnline]); // Run when phone number is set and connectivity changes
+
+  // Call duration timer - starts when call becomes active, persists across view changes
+  useEffect(() => {
+    const callStatus = String(currentCall?.status || '').toLowerCase();
+
+    if (callStatus === 'active' && !callStartTimeRef.current) {
+      // Call just became active - start the timer
+      // Use accepted_at if available, otherwise use current time
+      const startTime = currentCall?.accepted_at
+        ? new Date(currentCall.accepted_at).getTime()
+        : Date.now();
+      callStartTimeRef.current = startTime;
+
+      // Calculate initial duration (in case we're restoring state)
+      const initialDuration = Math.floor((Date.now() - startTime) / 1000);
+      setCallDuration(Math.max(0, initialDuration));
+
+      console.log('[App] ⏱️ Call timer started', {
+        callId: currentCall?.id,
+        startTime: new Date(startTime).toISOString(),
+        initialDuration,
+      });
+
+      // Start interval to update duration every second
+      callTimerIntervalRef.current = setInterval(() => {
+        if (callStartTimeRef.current) {
+          const elapsed = Math.floor(
+            (Date.now() - callStartTimeRef.current) / 1000,
+          );
+          setCallDuration(elapsed);
+        }
+      }, 1000);
+    } else if (callStatus !== 'active' && callStartTimeRef.current) {
+      // Call ended or changed status - stop the timer
+      console.log('[App] ⏱️ Call timer stopped', {
+        callId: currentCall?.id,
+        finalDuration: callDuration,
+      });
+
+      if (callTimerIntervalRef.current) {
+        clearInterval(callTimerIntervalRef.current);
+        callTimerIntervalRef.current = null;
+      }
+      callStartTimeRef.current = null;
+      // Don't reset callDuration here - let it persist for EndCallView
+    } else if (!currentCall) {
+      // No call - reset everything
+      if (callTimerIntervalRef.current) {
+        clearInterval(callTimerIntervalRef.current);
+        callTimerIntervalRef.current = null;
+      }
+      callStartTimeRef.current = null;
+      setCallDuration(0);
+    }
+
+    return () => {
+      // Cleanup on unmount
+      if (callTimerIntervalRef.current) {
+        clearInterval(callTimerIntervalRef.current);
+      }
+    };
+  }, [currentCall?.status, currentCall?.id, currentCall?.accepted_at]);
 
   useEffect(() => {
     // keep refs to subscriptions so we can cleanup precisely
@@ -3009,6 +3076,7 @@ export default function App() {
           uploadStatus={uploadStatus}
           myPhoneNumber={myPhoneNumber}
           myUsername={myUsername}
+          callDuration={callDuration}
         />
       )}
       {view === 'connected' && currentCall && (
@@ -3024,6 +3092,7 @@ export default function App() {
           callStartTime={currentCall.created_at}
           myStateHistory={myStateHistoryRef.current}
           otherStateHistory={otherStateHistoryRef.current}
+          callDuration={callDuration}
         />
       )}
       {view === 'end' && <EndCallView onDone={handleEndDone} />}
