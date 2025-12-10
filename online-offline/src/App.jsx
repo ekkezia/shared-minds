@@ -11,7 +11,6 @@ import DualTimeline from './components/DualTimeline.jsx';
 import EndCallView from './views/EndCallView.jsx';
 
 import {
-  ensureRegisteredAndListen,
   listenForIncomingCalls,
   listenForAudio,
   startRecording,
@@ -19,19 +18,14 @@ import {
   createCall,
   acceptCall,
   endCall,
-  isUserOnline,
   cacheAudioUrl,
   resolvePlayableUrl,
-  subscribeToUsers,
-  unsubscribeIncomingCalls,
   unsubscribeAudio,
-  unsubscribeUsers,
   fetchPendingRingingCallForNumber,
   stopPresenceHeartbeat,
   setUserOffline,
   startPresenceHeartbeat,
   fetchCallById,
-  fetchUserByPhone,
   normalizePhoneNumber,
   checkIfUserIsInCall,
   getCurrentAudioStream,
@@ -40,6 +34,20 @@ import {
   fetchActiveCallId,
   fetchAudioChunksFromOppositeParty,
   setUploadProgressCallback,
+  markOfflineTransition,
+  resetForNewCall,
+  logUserStateChange,
+  fetchStateLogForCall,
+  subscribeToStateLog,
+  listenForUsers,
+  registerUser,
+  listenForCallUpdates,
+  fetchUserByPhone,
+  ensureRegisteredAndListen,
+  subscribeToUsers,
+  unsubscribeIncomingCalls,
+  unsubscribeUsers,
+  isUserOnline,
 } from './services/audioService.js';
 import useOnlineStatus from './hooks/useOnlineStatus.js';
 
@@ -222,6 +230,9 @@ export default function App() {
   // Track state history for dual timeline visualization
   const myStateHistoryRef = useRef([]); // Array of {timestamp, state: 'recording'|'playback', isOnline}
   const otherStateHistoryRef = useRef([]); // Array of {timestamp, state: 'recording'|'playback'}
+
+  // Track failed uploads (placeholder chunks to show as disabled/red)
+  const [myFailedUploads, setMyFailedUploads] = useState([]); // Array of {sessionIndex, timestamp, error}
 
   // Call duration timer - persists across view changes
   const [callDuration, setCallDuration] = useState(0); // seconds since call started
@@ -940,9 +951,8 @@ export default function App() {
     return () => {
       mounted = false;
       try {
-        unsubscribeIncomingCalls().catch(() => {});
-        unsubscribeAudio().catch(() => {});
-        unsubscribeUsers().catch(() => {});
+        unsubscribeIncomingCalls();
+        unsubscribeUsers();
         if (typeof incomingSub?.unsubscribe === 'function')
           incomingSub.unsubscribe().catch(() => {});
         if (typeof usersSub?.unsubscribe === 'function')
@@ -989,7 +999,9 @@ export default function App() {
       }
 
       console.log('[App] Refreshing users list - entered dialer view');
-      refreshUsersList(processUsersList);
+      refreshUsersList()
+        .then(processUsersList)
+        .catch(() => {});
 
       // Edge case: If user enters dialer view but has an active call, force end it
       // Only do this if we're not transitioning from a call view
@@ -1293,15 +1305,34 @@ export default function App() {
         // For DualTimeline, we need ALL chunks (both parties) to show both timelines
         // For the chunk scrubber, we'll filter to show only other party chunks
         // The playback controller will use otherPartyChunks for actual playback
+
+        // Also include my failed uploads as placeholder chunks (will show as disabled/red)
+        const allChunksWithFailed = [
+          ...historicalChunks,
+          ...myFailedUploads.map((f) => ({
+            id: `failed-${f.sessionIndex}`,
+            from_number: f.from_number,
+            created_at: f.timestamp,
+            failed: true,
+            error: f.error,
+            session_index: f.sessionIndex,
+          })),
+        ].sort((a, b) => {
+          const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+          return timeA - timeB;
+        });
+
         console.log('[App] Setting playback chunks', {
-          totalChunks: historicalChunks.length,
+          totalChunks: allChunksWithFailed.length,
           otherPartyChunks: otherPartyChunks.length,
-          myChunks: historicalChunks.length - otherPartyChunks.length,
+          myChunks: allChunksWithFailed.length - otherPartyChunks.length,
+          failedUploads: myFailedUploads.length,
         });
 
         // Set ALL chunks for DualTimeline visualization (needs both parties)
         // The view will filter to other party chunks for the scrubber display
-        setPlaybackChunks(historicalChunks);
+        setPlaybackChunks(allChunksWithFailed);
         setIsPlaying(false); // Will be set to true when play() is called
         playbackAbortRef.current = false;
 
@@ -1844,17 +1875,23 @@ export default function App() {
           state: 'playback',
           isOnline: false,
         });
-        // Don't reset chunkIndex when going offline - we'll resume from where we left off
-        stopRecording(false); // false = preserve chunkIndex
-        // Clear upload progress callback
+
+        // Log state change to database for other user to see
+        logUserStateChange(
+          currentCall.id,
+          myPhoneNumber,
+          'playback',
+          false,
+        ).catch(() => {});
+
+        // Mark offline transition - this increments session index if upload was successful
+        markOfflineTransition();
+        stopRecording(false);
         setUploadProgressCallback(null);
-        // Reset chunk counter
         setUploadedChunksCount(0);
         setView('connected');
       } else {
         // when we regain connectivity, show live calling UI
-        // BUT: Only restart recording if we haven't already uploaded for this call
-        // (we only record ONCE per online period, not continuously)
         console.log('[connectivity effect] Coming back online', {
           callId: currentCall.id,
           lastOfflineTimestamp: lastOfflineTimestampRef.current,
@@ -1862,11 +1899,21 @@ export default function App() {
         });
 
         // Track state change: going to recording mode
+        const stateChangeTimestamp = new Date().toISOString();
         myStateHistoryRef.current.push({
-          timestamp: new Date().toISOString(),
+          timestamp: stateChangeTimestamp,
           state: 'recording',
           isOnline: true,
         });
+
+        // Log state change to database for other user to see
+        logUserStateChange(
+          currentCall.id,
+          myPhoneNumber,
+          'recording',
+          true,
+        ).catch(() => {});
+
         setView('calling');
 
         // Only restart recording if we haven't uploaded yet for this online session
@@ -1886,6 +1933,7 @@ export default function App() {
               error,
               failed,
               uploading,
+              sessionIndex,
             }) => {
               if (uploadedCallId === callIdForCallback) {
                 if (uploading) {
@@ -1903,6 +1951,7 @@ export default function App() {
                 } else if (failed) {
                   console.warn('[connectivity effect] ⚠️ Chunk upload failed', {
                     callId: uploadedCallId,
+                    sessionIndex,
                     error,
                   });
                   setUploadStatus({
@@ -1911,6 +1960,17 @@ export default function App() {
                     uploading: false,
                     error: error || 'Upload failed',
                   });
+                  // Track failed upload for placeholder display
+                  setMyFailedUploads((prev) => [
+                    ...prev,
+                    {
+                      sessionIndex,
+                      timestamp: new Date().toISOString(),
+                      error: error || 'Upload failed',
+                      from_number: myPhoneNumber,
+                      failed: true,
+                    },
+                  ]);
                 } else {
                   setUploadedChunksCount((prev) => prev + 1);
                   setUploadStatus({
@@ -2385,7 +2445,7 @@ export default function App() {
           console.log(
             '[connectivity effect] Going offline - stopping recording and switching to connected view',
           );
-          // Record the timestamp when we go offline (to find first chunk of next online session)
+          // Record the timestamp when we go offline
           lastOfflineTimestampRef.current = new Date().toISOString();
           console.log('[connectivity effect] Recorded offline timestamp', {
             timestamp: lastOfflineTimestampRef.current,
@@ -2396,11 +2456,19 @@ export default function App() {
             state: 'playback',
             isOnline: false,
           });
-          // Don't reset chunkIndex when going offline - we'll resume from where we left off
-          stopRecording(false); // false = preserve chunkIndex
-          // Clear upload progress callback
+
+          // Log state change to database for other user to see
+          logUserStateChange(
+            currentCall.id,
+            myPhoneNumber,
+            'playback',
+            false,
+          ).catch(() => {});
+
+          // Mark offline transition - increments session index if upload was successful
+          markOfflineTransition();
+          stopRecording(false);
           setUploadProgressCallback(null);
-          // Reset chunk counter
           setUploadedChunksCount(0);
           setView('connected');
         }
@@ -2450,6 +2518,12 @@ export default function App() {
 
     // Clear any previous call ID reference before creating new call
     lastCreatedCallIdRef.current = null;
+
+    // Reset state for new call
+    resetForNewCall();
+    setMyFailedUploads([]);
+    myStateHistoryRef.current = [];
+    otherStateHistoryRef.current = [];
 
     // Create the call in the DB (do not supply an id — let DB generate UUID)
     let createdCall;
@@ -2521,6 +2595,7 @@ export default function App() {
         error,
         failed,
         uploading,
+        sessionIndex,
       }) => {
         console.log('[handleStartCall] Upload progress callback received', {
           uploadedCallId,
@@ -2543,6 +2618,7 @@ export default function App() {
           } else if (failed) {
             console.error('[handleStartCall] ❌ Chunk upload failed', {
               callId: uploadedCallId,
+              sessionIndex,
               error,
             });
             setUploadStatus({
@@ -2551,6 +2627,17 @@ export default function App() {
               uploading: false,
               error: error || 'Upload failed',
             });
+            // Track failed upload for placeholder display
+            setMyFailedUploads((prev) => [
+              ...prev,
+              {
+                sessionIndex,
+                timestamp: new Date().toISOString(),
+                error: error || 'Upload failed',
+                from_number: myPhoneNumber,
+                failed: true,
+              },
+            ]);
           } else {
             setUploadedChunksCount((prev) => {
               const newCount = prev + 1;
@@ -2801,6 +2888,12 @@ export default function App() {
     if (!callRow) callRow = currentCall;
     if (!callRow) return;
 
+    // Reset state for this call (recipient side)
+    resetForNewCall();
+    setMyFailedUploads([]);
+    myStateHistoryRef.current = [];
+    otherStateHistoryRef.current = [];
+
     // Update DB status to active + accepted_at (audioService.acceptCall handles the DB update)
     try {
       await acceptCall(callRow.id);
@@ -2849,6 +2942,7 @@ export default function App() {
           failed,
           error,
           uploading,
+          sessionIndex,
         }) => {
           if (uploadedCallId === callRow.id) {
             if (uploading) {
@@ -2863,6 +2957,7 @@ export default function App() {
             } else if (failed) {
               console.log('[handleAccept] ❌ Chunk upload failed', {
                 callId: uploadedCallId,
+                sessionIndex,
                 path,
                 error,
               });
@@ -2872,6 +2967,17 @@ export default function App() {
                 uploading: false,
                 error: error || 'Upload failed',
               });
+              // Track failed upload for placeholder display
+              setMyFailedUploads((prev) => [
+                ...prev,
+                {
+                  sessionIndex,
+                  timestamp: new Date().toISOString(),
+                  error: error || 'Upload failed',
+                  from_number: myPhoneNumber,
+                  failed: true,
+                },
+              ]);
             } else {
               setUploadedChunksCount((prev) => prev + 1);
               setUploadStatus({
