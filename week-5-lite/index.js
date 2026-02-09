@@ -43,6 +43,19 @@ cursorEl.style.opacity = '0.5';
 cursorEl.style.pointerEvents = 'none';
 document.body.appendChild(cursorEl);
 
+// Debug: show placement bbox overlay on the main viewer (toggleable)
+let DEBUG_SHOW_BBOX = false;
+const debugPlacementEl = document.createElement('div');
+Object.assign(debugPlacementEl.style, {
+  position: 'fixed',
+  border: '2px dashed rgba(255,0,0,0.9)',
+  pointerEvents: 'none',
+  display: 'none',
+  zIndex: 10002,
+  boxSizing: 'border-box',
+});
+document.body.appendChild(debugPlacementEl);
+
 function showLoading() {
   $('loading').style.display = 'flex';
   document.body.style.cursor = 'wait';
@@ -99,7 +112,7 @@ function initializeFirebase() {
 // Load existing timeline from Firebase
 async function loadTimeline() {
   try {
-    const imagesRef = ref(database, 'images');
+    const imagesRef = ref(database, 'images-lite');
     const snapshot = await get(imagesRef);
     const images = snapshot.val() || {};
 
@@ -163,16 +176,26 @@ function renderTimeline() {
       const imgData = currentImages[index];
       if (imgData) {
         currentImgIdx = Number(index);
-        renderImageInViewer(imgData, index);
+        // reset zoom when changing image
+        lastScale = 1;
+        virtualScroll = 0;
+        console.log('Clicked', { index, imgData });
+        renderImageInViewer(imgData, currentImgIdx);
       }
     });
 
-    item.addEventListener('mouseover', async () => {
-      const index = item.getAttribute('data-index');
-      const imgData = currentImages[index];
-      if (imgData) {
-        currentImgIdx = Number(index);
-        renderImageInViewer(imgData, index);
+    // use `mouseenter` so it doesn't bubble or accidentally fire after a click
+    item.addEventListener('mouseenter', () => {
+      const index = Number(item.getAttribute('data-index'));
+      if (Number.isFinite(index) && index !== currentImgIdx) {
+        const imgData = currentImages[index];
+        if (imgData) {
+          currentImgIdx = index;
+          // reset zoom when changing image
+          lastScale = 1;
+          virtualScroll = 0;
+          renderImageInViewer(imgData, currentImgIdx);
+        }
       }
     });
   });
@@ -192,23 +215,45 @@ function renderImageInViewer(imgData, index) {
   }
 
   imgEl.style.display = 'block';
+  imgEl.style.objectFit = 'contain';
   imgEl.src = imgData.dataURL;
+  
 
-  currentImgIdx =
-    typeof index !== 'undefined' ? Number(index) : imgData.idx || 0;
+  const newIndex = typeof index !== 'undefined' ? Number(index) : imgData.idx || 0;
+  // If the image index changed, reset zoom progress so zoom feels consistent per image
+  if (newIndex !== currentImgIdx) {
+    resetZoomProgress();
+  }
+
+  currentImgIdx = newIndex;
+  // apply the current scale (may be reset above)
+  imgEl.style.transform = `scale(${lastScale})`;
 
   if (bboxEl && imgData.placement) {
     const p = imgData.placement;
+    // translate stored percentages into pixel values relative to displayed image
+    const rect = imgEl.getBoundingClientRect();
+    const leftPx = (p.x / 100) * rect.width;
+    const topPx = (p.y / 100) * rect.height;
+    const widthPx = (p.width / 100) * rect.width;
+    const heightPx = (p.height / 100) * rect.height;
+
     bboxEl.style.display = 'block';
-    bboxEl.style.left = p.x + '%';
-    bboxEl.style.top = p.y + '%';
-    bboxEl.style.width = p.width + '%';
-    bboxEl.style.height = p.height + '%';
+    bboxEl.style.left = `${leftPx}px`;
+    bboxEl.style.top = `${topPx}px`;
+    bboxEl.style.width = `${widthPx}px`;
+    bboxEl.style.height = `${heightPx}px`;
+    bboxEl.style.position = 'absolute';
+
+    // recreate handles so they attach to the current bbox
+    createResizeHandles();
   } else if (bboxEl) {
     bboxEl.style.display = 'none';
+    clearResizeHandles();
   }
 
-  imgEl.style.transform = 'scale(1)';
+  // Ensure debug overlay updates whenever the viewer renders an image
+  updateDebugPlacementOverlay();
 }
 
 // ✅ NEW: Process with Canvas after bbox is defined
@@ -261,6 +306,9 @@ async function processCanvasWithPlacement() {
     currentImages.push(newImage);
     imageCache.set(finalDataURL, finalDataURL);
 
+    // reset zoom when showing newly generated image
+    lastScale = 1;
+    virtualScroll = 0;
     // Display the newly generated image with bbox
     renderImageInViewer(newImage, currentImages.length - 1);
 
@@ -373,6 +421,9 @@ async function handleFirstImageUpload(file, dataURL) {
     currentImages.push(newImage);
     imageCache.set(dataURL, dataURL);
 
+    // reset zoom when showing first uploaded image
+    lastScale = 1;
+    virtualScroll = 0;
     renderImageInViewer(newImage, 0);
     renderTimeline();
 
@@ -412,8 +463,30 @@ async function compositeImages(baseDataURL, overlayDataURL, placement) {
           const w = (placement.width / 100) * baseImg.width;
           const h = (placement.height / 100) * baseImg.height;
 
-          // Draw overlay image at specified position
-          ctx.drawImage(overlayImg, x, y, w, h);
+          // Draw overlay image at specified position using "cover" behavior
+          // Compute source rect from overlay image so it fills destination while preserving aspect ratio
+          const overlayAR = overlayImg.width / overlayImg.height;
+          const destAR = w / h;
+          let sx = 0;
+          let sy = 0;
+          let sw = overlayImg.width;
+          let sh = overlayImg.height;
+
+          if (overlayAR > destAR) {
+            // overlay is wider; use full height, crop width
+            sh = overlayImg.height;
+            sw = Math.floor(sh * destAR);
+            sx = Math.floor((overlayImg.width - sw) / 2);
+            sy = 0;
+          } else {
+            // overlay is taller; use full width, crop height
+            sw = overlayImg.width;
+            sh = Math.floor(sw / destAR);
+            sx = 0;
+            sy = Math.floor((overlayImg.height - sh) / 2);
+          }
+
+          ctx.drawImage(overlayImg, sx, sy, sw, sh, x, y, w, h);
 
           // Convert to data URL
           resolve(canvas.toDataURL('image/png'));
@@ -450,11 +523,87 @@ function loadImage(src) {
   });
 }
 
+// Estimate bytes from a data URL (base64). Returns integer bytes.
+function dataURLtoBytes(dataURL) {
+  try {
+    const base64 = dataURL.split(',')[1] || '';
+    return Math.ceil((base64.length * 3) / 4);
+  } catch (e) {
+    return dataURL.length;
+  }
+}
+
+// Downsize a dataURL by scaling and JPEG compression until it fits under maxBytes.
+// Returns the downsized dataURL (may be JPEG). If cannot reach target, returns the smallest produced.
+async function downsizeDataURL(dataURL, maxBytes) {
+  const img = await loadImage(dataURL);
+  const originalBytes = dataURLtoBytes(dataURL);
+  if (originalBytes <= maxBytes) return dataURL;
+
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const ow = img.width;
+  const oh = img.height;
+
+  let best = dataURL;
+  let bestSize = originalBytes;
+
+  // Try progressively smaller scales and JPEG qualities
+  for (let scale = 1.0; scale >= 0.2; scale -= 0.1) {
+    canvas.width = Math.max(1, Math.floor(ow * scale));
+    canvas.height = Math.max(1, Math.floor(oh * scale));
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    for (let q = 0.92; q >= 0.4; q -= 0.12) {
+      const candidate = canvas.toDataURL('image/jpeg', q);
+      const size = dataURLtoBytes(candidate);
+      if (size <= maxBytes) return candidate;
+      if (size < bestSize) {
+        best = candidate;
+        bestSize = size;
+      }
+    }
+  }
+
+  // If we couldn't reach the target, return the smallest candidate we produced.
+  return best;
+}
+
 // Save image data to Firebase
 async function saveImageToDatabase(imageData) {
-  const imagesRef = ref(database, 'images');
+  // Always attempt to save to Realtime Database. If the dataURL is too large,
+  // downsize the image (scale + JPEG compression) until it fits under the threshold.
+  const MAX_DB_BYTES = 1_000_000; // ~1MB conservative threshold (adjustable)
+
+  if (!database) {
+    throw new Error('Database not initialized');
+  }
+
+  let dataToStore = imageData.dataURL;
+  const initialBytes = dataURLtoBytes(dataToStore);
+  if (initialBytes > MAX_DB_BYTES) {
+    console.warn(`Image too large for DB (${initialBytes} bytes). Downsizing...`);
+    showStatus('Downsizing image to fit database limits...', 'success');
+    try {
+      const downsized = await downsizeDataURL(dataToStore, MAX_DB_BYTES);
+      const downsizedBytes = dataURLtoBytes(downsized);
+      console.log(`Downsized image: ${downsizedBytes} bytes`);
+      dataToStore = downsized;
+      // annotate metadata so callers know we changed the encoding/size
+      imageData.wasDownsized = true;
+      imageData.originalSizeBytes = initialBytes;
+      imageData.downsizedSizeBytes = downsizedBytes;
+    } catch (err) {
+      console.warn('Downsizing failed, continuing with original image:', err);
+    }
+  }
+
+  // Replace dataURL with the (possibly downsized) data and write to DB
+  const dbImageData = { ...imageData, dataURL: dataToStore };
+  const imagesRef = ref(database, 'images-lite');
   const newImageRef = push(imagesRef);
-  await set(newImageRef, imageData);
+  await set(newImageRef, dbImageData);
   return newImageRef.key;
 }
 
@@ -463,42 +612,130 @@ const img = $('mainImage');
 let virtualScroll = 0;
 let zoomLocked = false;
 const timeline = $('timeline');
+let lastScale = 1; // remember current image scale
+let virtualScrollResetTimeout = null;
+
+function resetZoomProgress() {
+  lastScale = 1;
+  virtualScroll = 0;
+  if (img) {
+    img.style.transform = `scale(${lastScale})`;
+    img.style.transformOrigin = `50% 50%`;
+  }
+  // update debug overlay when zoom reset
+  updateDebugPlacementOverlay();
+}
+
+// Update the debug overlay to show the current image's placement bbox
+function updateDebugPlacementOverlay() {
+  if (!DEBUG_SHOW_BBOX) {
+    debugPlacementEl.style.display = 'none';
+    return;
+  }
+
+  if (!img || currentImgIdx < 0 || currentImgIdx >= currentImages.length) {
+    debugPlacementEl.style.display = 'none';
+    return;
+  }
+
+  const cur = currentImages[currentImgIdx];
+  const p = cur && cur.placement ? cur.placement : currentPlacement;
+  if (!p) {
+    debugPlacementEl.style.display = 'none';
+    return;
+  }
+
+  const rect = img.getBoundingClientRect();
+  const left = rect.left + (p.x / 100) * rect.width;
+  const top = rect.top + (p.y / 100) * rect.height;
+  const width = (p.width / 100) * rect.width;
+  const height = (p.height / 100) * rect.height;
+  console.log(`Updating debug overlay: left=${left}, top=${top}, width=${width}, height=${height}`, p);
+
+  Object.assign(debugPlacementEl.style, {
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${width}px`,
+    height: `${height}px`,
+    display: 'block',
+  });
+}
 
 window.addEventListener(
   'wheel',
   (e) => {
-    if (timeline && timeline.contains(e.target)) {
-      return;
-    }
+    // ignore wheel events originating from the timeline UI
+    if (timeline && timeline.contains(e.target)) return;
 
     if (zoomLocked) return;
     if (currentImgIdx < 0 || currentImgIdx >= currentImages.length) return;
 
-    virtualScroll += e.deltaY;
-    virtualScroll = Math.max(0, virtualScroll);
+    const current = currentImages[currentImgIdx];
+    if (!current || !current.placement) return;
 
-    if (!currentImages[currentImgIdx].placement) return;
+    // We will use the placement proportions to compute a target scale
+    // such that the bbox (the smaller picture) fills the viewer. Scrolling
+    // interpolates lastScale from 1 -> targetScale; when close to target,
+    // we navigate into the nested image.
+    e.preventDefault();
 
-    const p = currentImages[currentImgIdx].placement;
-
-    // Calculate center of the bbox
+    const p = current.placement;
+    const rect = img.getBoundingClientRect();
     const centerX = p.x + p.width / 2;
     const centerY = p.y + p.height / 2;
 
-    img.style.transform = `scale(${1 + virtualScroll * 0.001})`;
+    const bboxWidthPx = (p.width / 100) * rect.width;
+    const bboxHeightPx = (p.height / 100) * rect.height;
+
+    // Target scale so the bbox fills the viewer in either dimension.
+    const targetScaleX = rect.width / Math.max(1, bboxWidthPx);
+    const targetScaleY = rect.height / Math.max(1, bboxHeightPx);
+    // choose the smaller of the two (so the bbox fully fits) and clamp
+    const targetScale = Math.min(Math.max(1, Math.min(targetScaleX, targetScaleY)), 8);
+
+    // Sensitivity: how much a single wheel delta moves the scale relative to remaining distance
+    const SENSITIVITY = 0.003; // tuneable
+    const remaining = targetScale - 1;
+    const scaleDelta = -e.deltaY * SENSITIVITY * Math.max(0.0001, remaining);
+
+    lastScale = Math.max(1, Math.min(targetScale, lastScale + scaleDelta));
     img.style.transformOrigin = `${centerX}% ${centerY}%`;
+    img.style.transform = `scale(${lastScale})`;
 
-    if (Math.abs(e.deltaY) > 100) {
-      if (currentImgIdx > 0) currentImgIdx -= 1;
+    // update debug overlay to match current scale/placement
+    updateDebugPlacementOverlay();
 
-      virtualScroll = 0;
-      renderImageInViewer(currentImages[currentImgIdx], currentImgIdx);
-      img.style.transform = 'scale(1)';
+    // progress [0..1] where 1 means the bbox has been zoomed to fill the viewer
+    const progress = remaining > 0 ? (lastScale - 1) / remaining : 1;
 
-      zoomLocked = true;
-      setTimeout(() => {
-        zoomLocked = false;
-      }, 500);
+    // When user has scrolled enough (progress nearly 1), navigate according
+    // to the scroll direction: scrolling UP (e.deltaY < 0) should go to the
+    // previous image (the nested/smaller one). Scrolling DOWN should go to
+    // the next image.
+    if (progress >= 0.95) {
+      if (e.deltaY < 0) {
+        // zooming in -> go to previous image
+        if (currentImgIdx > 0) {
+          currentImgIdx -= 1;
+          resetZoomProgress();
+          renderImageInViewer(currentImages[currentImgIdx], currentImgIdx);
+          zoomLocked = true;
+          setTimeout(() => {
+            zoomLocked = false;
+          }, 500);
+        }
+      } else {
+        // zooming out -> go to next image (if any)
+        if (currentImgIdx < currentImages.length - 1) {
+          currentImgIdx += 1;
+          resetZoomProgress();
+          renderImageInViewer(currentImages[currentImgIdx], currentImgIdx);
+          zoomLocked = true;
+          setTimeout(() => {
+            zoomLocked = false;
+          }, 500);
+        }
+      }
     }
   },
   { passive: false },
@@ -525,6 +762,234 @@ document.addEventListener('mousemove', (e) => {
 // BBox drawing listener
 const bbox = document.getElementById('add-bbox');
 const mainImage = document.getElementById('add-image');
+let pendingOverlayAspect = null;
+// bboxPreviewImg removed; using background-image on bbox for cropping
+
+function clearResizeHandles() {
+  const existing = bbox.querySelectorAll('.resize-handle');
+  existing.forEach((el) => el.remove());
+}
+
+function createResizeHandles() {
+  clearResizeHandles();
+
+  // left/right handles for horizontal crop; top/bottom handles for vertical crop
+  const handles = [
+    { name: 'r', cursor: 'ew-resize' },
+    { name: 'l', cursor: 'ew-resize' },
+    { name: 't', cursor: 'ns-resize' },
+    { name: 'b', cursor: 'ns-resize' },
+  ];
+
+  handles.forEach((h) => {
+    const el = document.createElement('div');
+    el.className = 'resize-handle ' + h.name;
+    el.dataset.handle = h.name;
+    // style depending on handle position
+    if (h.name === 'l' || h.name === 'r') {
+      Object.assign(el.style, {
+        position: 'absolute',
+        background: 'rgba(0,0,0,0.4)',
+        width: '8px',
+        height: '100%',
+        right: h.name === 'l' ? 'auto' : '0px',
+        left: h.name === 'l' ? '-4px' : 'auto',
+        top: '0px',
+        cursor: h.cursor,
+        zIndex: 10001,
+        boxSizing: 'border-box',
+      });
+    } else if (h.name === 't' || h.name === 'b') {
+      Object.assign(el.style, {
+        position: 'absolute',
+        background: 'rgba(0,0,0,0.35)',
+        height: '8px',
+        width: '100%',
+        left: '0px',
+        top: h.name === 't' ? '-4px' : 'auto',
+        bottom: h.name === 'b' ? '-4px' : 'auto',
+        cursor: h.cursor,
+        zIndex: 10001,
+        boxSizing: 'border-box',
+      });
+    }
+
+    bbox.appendChild(el);
+  });
+
+  attachHandleListeners();
+  // allow grab cursor to indicate move is available
+  bbox.style.cursor = 'grab';
+
+  // attach move handler so users can reposition the bbox by dragging
+  attachBBoxMoveHandler();
+}
+
+function attachHandleListeners() {
+  let dragging = null;
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+  let startWidth = 0;
+  let startHeight = 0;
+  const imgRect = mainImage.getBoundingClientRect();
+
+  const onMove = (e) => {
+    if (!dragging) return;
+    const clientX = e.clientX;
+    const clientY = e.clientY;
+    const dx = clientX - startX;
+    const dy = clientY - startY;
+
+    if (dragging === 'r') {
+      // right edge: horizontal crop
+      let newW = Math.max(20, startWidth + dx);
+      newW = Math.min(newW, imgRect.width - startLeft);
+      bbox.style.width = `${newW}px`;
+    } else if (dragging === 'l') {
+      // left edge: move left edge to crop horizontally
+      let newLeft = startLeft + dx;
+      let newW = startWidth - dx;
+      // clamp horizontally
+      if (newLeft < 0) {
+        newLeft = 0;
+        newW = startLeft + startWidth;
+      }
+      if (newW < 20) {
+        newW = 20;
+        newLeft = startLeft + (startWidth - newW);
+      }
+      bbox.style.left = `${newLeft}px`;
+      bbox.style.width = `${newW}px`;
+    } else if (dragging === 'b') {
+      // bottom edge: adjust height
+      let newH = Math.max(20, startHeight + dy);
+      newH = Math.min(newH, imgRect.height - startTop);
+      bbox.style.height = `${newH}px`;
+    } else if (dragging === 't') {
+      // top edge: move top and reduce/increase height
+      let newTop = startTop + dy;
+      let newH = startHeight - dy;
+      if (newTop < 0) {
+        newTop = 0;
+        newH = startTop + startHeight;
+      }
+      if (newH < 20) {
+        newH = 20;
+        newTop = startTop + (startHeight - newH);
+      }
+      bbox.style.top = `${newTop}px`;
+      bbox.style.height = `${newH}px`;
+    }
+
+    // update currentPlacement in percentages relative to mainImage rect
+    const rect = mainImage.getBoundingClientRect();
+    const leftPx = parseFloat(bbox.style.left) || 0;
+    const topPx = parseFloat(bbox.style.top) || 0;
+    const widthPx = parseFloat(bbox.style.width) || 0;
+    const heightPx = parseFloat(bbox.style.height) || 0;
+
+    currentPlacement = {
+      x: (leftPx / rect.width) * 100,
+      y: (topPx / rect.height) * 100,
+      width: (widthPx / rect.width) * 100,
+      height: (heightPx / rect.height) * 100,
+    };
+    // update debug overlay immediately when resizing placement
+    updateDebugPlacementOverlay();
+  };
+
+  const onUp = () => {
+    if (!dragging) return;
+    dragging = null;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    showStatus('Placement updated', 'success');
+  };
+
+  bbox.querySelectorAll('.resize-handle').forEach((h) => {
+    h.addEventListener('mousedown', (ev) => {
+      ev.stopPropagation();
+      dragging = h.dataset.handle;
+      startX = ev.clientX;
+      startY = ev.clientY;
+      startLeft = parseFloat(bbox.style.left) || 0;
+      startTop = parseFloat(bbox.style.top) || 0;
+      startWidth = parseFloat(bbox.style.width) || bbox.getBoundingClientRect().width;
+      startHeight = parseFloat(bbox.style.height) || bbox.getBoundingClientRect().height;
+
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  });
+}
+
+// Attach move handler to the bbox (drag to reposition). Resize handles stopPropagation
+function attachBBoxMoveHandler() {
+  let moving = false;
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+
+  const onMove = (e) => {
+    if (!moving) return;
+    const clientX = e.clientX;
+    const clientY = e.clientY;
+    const dx = clientX - startX;
+    const dy = clientY - startY;
+
+    const imgRect = mainImage.getBoundingClientRect();
+    const bboxRect = bbox.getBoundingClientRect();
+
+    let newLeft = startLeft + dx;
+    let newTop = startTop + dy;
+
+    // clamp within image
+    newLeft = Math.max(0, Math.min(newLeft, imgRect.width - bboxRect.width));
+    newTop = Math.max(0, Math.min(newTop, imgRect.height - bboxRect.height));
+
+    bbox.style.left = `${newLeft}px`;
+    bbox.style.top = `${newTop}px`;
+
+    // update placement percent relative to displayed image
+    currentPlacement = {
+      x: (newLeft / imgRect.width) * 100,
+      y: (newTop / imgRect.height) * 100,
+      width: (bboxRect.width / imgRect.width) * 100,
+      height: (bboxRect.height / imgRect.height) * 100,
+    };
+    // update debug overlay while moving
+    updateDebugPlacementOverlay();
+  };
+
+  const onUp = () => {
+    if (!moving) return;
+    moving = false;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    bbox.style.cursor = 'grab';
+    showStatus('Placement moved', 'success');
+  };
+
+  bbox.addEventListener('mousedown', (ev) => {
+    // ignore clicks originating from handles (they stopPropagation already) or process button
+    if (ev.target && ev.target.classList && ev.target.classList.contains('resize-handle')) return;
+    ev.stopPropagation();
+    const imgRect = mainImage.getBoundingClientRect();
+    startX = ev.clientX;
+    startY = ev.clientY;
+    startLeft = parseFloat(bbox.style.left) || 0;
+    startTop = parseFloat(bbox.style.top) || 0;
+    moving = true;
+    bbox.style.cursor = 'grabbing';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+// bbox drag (move) disabled for now
 
 mainImage.addEventListener('click', (e) => {
   if (!currentImages[currentImages.length - 1]) {
@@ -557,6 +1022,8 @@ mainImage.addEventListener('click', (e) => {
       bboxWidthPx,
     );
 
+    pendingOverlayAspect = ASPECT_RATIO;
+
     // Convert to percentages relative to main image
     const leftPct = ((clickX - bboxWidthPx / 2) / rect.width) * 100;
     const topPct = ((clickY - bboxHeightPx / 2) / rect.height) * 100;
@@ -570,13 +1037,18 @@ mainImage.addEventListener('click', (e) => {
     bbox.style.height = `${(heightPct / 100) * rect.height}px`;
     bbox.style.display = 'block';
     bbox.style.position = 'absolute';
+    bbox.style.overflow = 'hidden';
+    // use CSS background image with cover to crop reliably
     bbox.style.backgroundImage = `url(${previousImgURL})`;
-    bbox.style.backgroundSize = 'contain';
+    bbox.style.backgroundSize = 'cover';
     bbox.style.backgroundPosition = 'center';
     bbox.style.backgroundRepeat = 'no-repeat';
     bbox.style.border = '2px dashed #00bcd4';
     bbox.style.zIndex = 9999;
     bbox.style.boxSizing = 'border-box';
+
+    // add resize handles for scaling / cropping
+    createResizeHandles();
 
     currentPlacement = {
       x: leftPct, //
@@ -615,6 +1087,31 @@ document.addEventListener('keydown', (e) => {
         '⚠️ Please click on the image to define placement first.',
         'error',
       );
+    }
+  }
+
+  // Remove preview and prompt upload with Backspace or Delete
+  if (e.key === 'Backspace' || e.key === 'Delete') {
+    // only intercept if a preview exists or a pending image was uploaded
+    const addImgEl = document.getElementById('add-image');
+    if (pendingImageFile || (addImgEl && addImgEl.style.display === 'block')) {
+      e.preventDefault();
+      // remove preview
+      if (addImgEl) {
+        addImgEl.src = '';
+        addImgEl.style.display = 'none';
+      }
+      pendingImageFile = null;
+      pendingOriginalDataURL = null;
+      currentPlacement = null;
+      // remove bbox preview and handles
+      // clear any background preview
+      bbox.style.backgroundImage = 'none';
+      clearResizeHandles();
+      bbox.style.display = 'none';
+      showStatus('Preview removed — please upload a replacement', 'success');
+      // open file picker to replace
+      if (fileInput) fileInput.click();
     }
   }
 
@@ -701,3 +1198,37 @@ mainImage.addEventListener('mousemove', (e) => {
 mainImage.addEventListener('mouseleave', () => {
   hoverLabel.style.display = 'none';
 });
+
+// Click on the main viewer image to incrementally zoom in toward the placement
+if (img) {
+  img.addEventListener('click', (e) => {
+    if (zoomLocked) return;
+    if (currentImgIdx < 0 || currentImgIdx >= currentImages.length) return;
+
+    const current = currentImages[currentImgIdx];
+    const p = current && current.placement ? current.placement : currentPlacement;
+    if (!p) return;
+
+    const rect = img.getBoundingClientRect();
+    const bboxWidthPx = (p.width / 100) * rect.width;
+    const bboxHeightPx = (p.height / 100) * rect.height;
+    const targetScaleX = rect.width / Math.max(1, bboxWidthPx);
+    const targetScaleY = rect.height / Math.max(1, bboxHeightPx);
+    const targetScale = Math.min(Math.max(1, Math.min(targetScaleX, targetScaleY)), 8);
+
+    const remaining = targetScale - 1;
+    if (remaining <= 0) return;
+
+    // step toward the target so repeated clicks accumulate
+    const step = Math.max(0.15, remaining * 0.3);
+    lastScale = Math.max(1, Math.min(targetScale, lastScale + step));
+
+    const centerX = p.x + p.width / 2;
+    const centerY = p.y + p.height / 2;
+    img.style.transformOrigin = `${centerX}% ${centerY}%`;
+    img.style.transform = `scale(${lastScale})`;
+
+    // keep the debug overlay in sync
+    updateDebugPlacementOverlay();
+  });
+}
