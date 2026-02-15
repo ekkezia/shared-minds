@@ -5,6 +5,7 @@ import {
   get,
   set,
   push,
+  remove,
   orderByKey,
   query,
 } from 'https://www.gstatic.com/firebasejs/10.4.0/firebase-database.js';
@@ -169,7 +170,8 @@ function renderTimeline() {
       .map(
         (img, index) =>
           `
-      <div class="image-item" data-index="${index}">
+      <div class="image-item" data-index="${index}" data-id="${img.id}">
+        <button class="delete-btn" data-id="${img.id}" title="Delete image">×</button>
         <img src="${img.dataURL}" alt="Image ${index + 1}" loading="lazy">
         <div class="image-info">
           ${Math.floor(new Date(img.timestamp).getTime() / 1000).toString()}
@@ -190,6 +192,7 @@ function renderTimeline() {
   }
 
   attachUploadListeners();
+  attachDeleteListeners();
 
   const imageItems = document.querySelectorAll('.image-item');
   imageItems.forEach((item) => {
@@ -214,6 +217,140 @@ function renderTimeline() {
 
   requestAnimationFrame(() => {
     timeline.scrollLeft = timeline.scrollWidth;
+  });
+}
+
+// Delete image from Firebase
+async function deleteImage(imageId) {
+  if (!database) {
+    showStatus('Database not initialized', 'error');
+    return;
+  }
+
+  const imageIndex = currentImages.findIndex(img => img.id === imageId);
+  if (imageIndex === -1) return;
+
+  const subsequentCount = currentImages.length - imageIndex - 1;
+  let deleteSubsequent = true;
+  
+  // Show custom dialog with options
+  if (subsequentCount > 0) {
+    const message = `⚠️  WARNING: CASCADING DELETE\n\n` +
+      `This image has ${subsequentCount} image(s) after it.\n` +
+      `Deleting this image will BREAK the picture-in-picture effect for subsequent images.\n\n` +
+      `Choose an option:\n` +
+      `1 = Delete ONLY this image (may break subsequent images)\n` +
+      `2 = Delete this image AND all ${subsequentCount} subsequent image(s) [RECOMMENDED]\n\n` +
+      `Enter 1 or 2:`;
+    
+    const choice = prompt(message, '2');
+    
+    if (choice === null) return; // User cancelled
+    
+    if (choice === '1') {
+      deleteSubsequent = false;
+      // Double confirm for risky option
+      const confirmRisky = confirm(
+        `⚠️  CONFIRM RISKY ACTION\n\n` +
+        `You chose to delete ONLY this image.\n` +
+        `This will likely BREAK ${subsequentCount} subsequent image(s).\n\n` +
+        `Are you absolutely sure?`
+      );
+      if (!confirmRisky) return;
+    } else if (choice === '2') {
+      deleteSubsequent = true;
+      // Confirm cascade delete
+      const confirmCascade = confirm(
+        `Confirm: Delete this image and all ${subsequentCount} subsequent image(s)?`
+      );
+      if (!confirmCascade) return;
+    } else {
+      showStatus('Invalid choice. Deletion cancelled.', 'error');
+      return;
+    }
+  } else {
+    // Last image, simple confirm
+    if (!confirm('Delete this image?')) return;
+  }
+
+  try {
+    showLoading();
+    
+    // Get images to delete
+    const imagesToDelete = deleteSubsequent 
+      ? currentImages.slice(imageIndex)
+      : [currentImages[imageIndex]];
+    
+    // Delete from Firebase
+    for (const img of imagesToDelete) {
+      const imageRef = ref(database, `images/${img.id}`);
+      await remove(imageRef);
+    }
+    
+    // Remove from local array
+    currentImages = currentImages.filter(img => 
+      !imagesToDelete.some(delImg => delImg.id === img.id)
+    );
+    
+    // If deleted image was being viewed, clear viewer or show previous
+    if (currentImages.length > 0) {
+      currentImgIdx = Math.min(imageIndex, currentImages.length - 1);
+      if (currentImgIdx >= 0) {
+        renderImageInViewer(currentImages[currentImgIdx], currentImgIdx);
+      }
+    } else {
+      const imgEl = $('mainImage');
+      if (imgEl) imgEl.style.display = 'none';
+      currentImgIdx = -1;
+    }
+    
+    renderTimeline();
+    const deletedCount = imagesToDelete.length;
+    showStatus(`${deletedCount} image${deletedCount > 1 ? 's' : ''} deleted successfully`, 'success');
+  } catch (error) {
+    console.error('Error deleting image:', error);
+    showStatus('Error deleting image: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// Attach delete button listeners
+function attachDeleteListeners() {
+  const deleteButtons = document.querySelectorAll('.delete-btn');
+  deleteButtons.forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation(); // Prevent triggering image view
+      const imageId = btn.getAttribute('data-id');
+      if (imageId) {
+        deleteImage(imageId);
+      }
+    });
+    
+    // Add hover effect to show which images will be deleted
+    btn.addEventListener('mouseenter', (e) => {
+      e.stopPropagation();
+      const imageId = btn.getAttribute('data-id');
+      const imageIndex = currentImages.findIndex(img => img.id === imageId);
+      
+      // Dim all subsequent images
+      const allItems = document.querySelectorAll('.image-item');
+      allItems.forEach((item, idx) => {
+        if (idx >= imageIndex) {
+          item.style.opacity = '0.5';
+          item.style.filter = 'grayscale(0.5)';
+        }
+      });
+    });
+    
+    btn.addEventListener('mouseleave', (e) => {
+      // Reset all images
+      const allItems = document.querySelectorAll('.image-item');
+      allItems.forEach((item) => {
+        item.style.opacity = '1';
+        item.style.filter = 'none';
+      });
+    });
   });
 }
 
