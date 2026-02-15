@@ -113,7 +113,7 @@ function initializeFirebase() {
 // Load existing timeline from Firebase
 async function loadTimeline() {
   try {
-    const imagesRef = ref(database, 'images-lite');
+    const imagesRef = ref(database, 'images-lite-autofiction');
     const snapshot = await get(imagesRef);
     const images = snapshot.val() || {};
 
@@ -271,7 +271,7 @@ async function deleteImage(imageId) {
     
     // Delete from Firebase
     for (const img of imagesToDelete) {
-      const imageRef = ref(database, `images-lite/${img.id}`);
+      const imageRef = ref(database, `images-lite-autofiction/${img.id}`);
       await remove(imageRef);
     }
     
@@ -738,7 +738,7 @@ async function saveImageToDatabase(imageData) {
 
   // Replace dataURL with the (possibly downsized) data and write to DB
   const dbImageData = { ...imageData, dataURL: dataToStore };
-  const imagesRef = ref(database, 'images-lite');
+  const imagesRef = ref(database, 'images-lite-autofiction');
   const newImageRef = push(imagesRef);
   await set(newImageRef, dbImageData);
   return newImageRef.key;
