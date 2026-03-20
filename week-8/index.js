@@ -17,8 +17,6 @@ import {
   getDownloadURL,
 } from 'https://www.gstatic.com/firebasejs/10.4.0/firebase-storage.js';
 
-// Constants
-// Hardcoded Firebase config
 const firebaseConfig = {
   apiKey: 'AIzaSyAG37DSc7Bk9tDs5IKclkVssX4B7r5hKZs',
   authDomain: 'd-capture-fbe10.firebaseapp.com',
@@ -30,19 +28,16 @@ const firebaseConfig = {
 };
 
 import * as THREE from 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.1/three.module.min.js';
-
 import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/+esm';
 
-// --- Firebase
-
-// Global state
+// --- Firebase ---
 let firebaseApp = null;
 let database = null;
 let storage = null;
 initFirebase();
 
 let currentPos = null;
-const UPLOAD_TO_FIREBASE = true; // <-- set to false to skip upload
+const UPLOAD_TO_FIREBASE = true;
 
 async function initFirebase() {
   firebaseApp = initializeApp(firebaseConfig);
@@ -54,45 +49,33 @@ async function initFirebase() {
 const gui = new GUI({ width: 300 });
 gui.domElement.style.display = 'none';
 
-const cameraRotation = {
-  x: 0,
-  y: 0,
-  z: 0,
-};
-
+const cameraRotation = { x: 0, y: 0, z: 0 };
 const rotationFolder = gui.addFolder('Camera Rig Rotation');
-rotationFolder
-  .add(cameraRotation, 'x', -Math.PI, Math.PI, 0.01)
-  .name('Rotation X')
-  .onChange(updateCameraRotation);
-rotationFolder
-  .add(cameraRotation, 'y', -Math.PI, Math.PI, 0.01)
-  .name('Rotation Y')
-  .onChange(updateCameraRotation);
-rotationFolder
-  .add(cameraRotation, 'z', -Math.PI, Math.PI, 0.01)
-  .name('Rotation Z')
-  .onChange(updateCameraRotation);
+rotationFolder.add(cameraRotation, 'x', -Math.PI, Math.PI, 0.01).name('Rotation X').onChange(updateCameraRotation);
+rotationFolder.add(cameraRotation, 'y', -Math.PI, Math.PI, 0.01).name('Rotation Y').onChange(updateCameraRotation);
+rotationFolder.add(cameraRotation, 'z', -Math.PI, Math.PI, 0.01).name('Rotation Z').onChange(updateCameraRotation);
 rotationFolder.open();
 
 function updateCameraRotation() {
   camera.rotation.x = cameraRotation.x;
   camera.rotation.y = cameraRotation.y;
   camera.rotation.z = cameraRotation.z;
-
   updateGyroUI();
 }
 
 // --- Device detection & gyro ---
-
 const gyro = { alpha: null, beta: null, gamma: null, permission: 'unknown' };
 let absSensor = null;
 let absQuat = [null, null, null, null];
 let absEuler = { x: null, y: null, z: null };
 let usingAbsoluteSensor = false;
 
+// --- Offset ---
+let offsetAlpha = 0;
+let offsetBeta = 0;
+let offsetGamma = 0;
+
 function quaternionToEuler(q) {
-  // q: [x, y, z, w]
   let x = q[0], y = q[1], z = q[2], w = q[3];
   const ysqr = y * y;
   const t0 = +2.0 * (w * x + y * z);
@@ -145,7 +128,6 @@ function startSensors() {
   );
 }
 
-// Start sensors on load or user gesture
 if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
   window.addEventListener('click', () => startSensors(), { once: true });
   window.addEventListener('touchend', () => startSensors(), { once: true });
@@ -156,8 +138,7 @@ if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.request
 const isMobile = (() => {
   const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
   const ua = navigator.userAgent;
-  const mobileUA =
-    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+  const mobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
   const isSmall = Math.min(window.innerWidth, window.innerHeight) < 768;
   return hasTouch && (mobileUA || isSmall);
 })();
@@ -189,24 +170,14 @@ const gyroDiv =
 
 // --- Three.js setup ---
 const scene = new THREE.Scene();
-
-const camera = new THREE.PerspectiveCamera(
-  75,
-  window.innerWidth / window.innerHeight,
-  0.1,
-  1000,
-);
-
-// Camera rig: everything moves inside the rig
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 0, 0);
 
-// Lights
 scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
 directionalLight.position.set(5, 5, 5);
 scene.add(directionalLight);
 
-// Red sphere at origin for reference
 const originMarker = new THREE.Mesh(
   new THREE.SphereGeometry(0.1, 32, 32),
   new THREE.MeshBasicMaterial({ color: 0xffffff }),
@@ -214,10 +185,8 @@ const originMarker = new THREE.Mesh(
 originMarker.position.set(0, 0, -5);
 scene.add(originMarker);
 
-// Axes helper
 scene.add(new THREE.AxesHelper(2));
 
-// Renderer
 const renderer = new THREE.WebGLRenderer({
   canvas: document.getElementById('three-canvas'),
   alpha: true,
@@ -226,11 +195,9 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setClearColor(0x000000, 0);
-
-// WebXR
 renderer.xr.enabled = true;
 
-// OrbitControls for desktop inspection
+// --- OrbitControls (desktop) ---
 let controls = null;
 async function setupControls() {
   if (isMobile) return;
@@ -243,68 +210,57 @@ async function setupControls() {
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.target.set(0, 0, 0);
-    controls.enabled = true; // make sure it’s active
-
+    controls.enabled = true;
     controls.update();
   } catch (err) {
     console.warn('OrbitControls not available:', err);
   }
 }
 
-// --- Gyro -> Camera Rig ---
-let lastAlpha = null;
-let accumulatedYaw = 0;
-let lastValidYaw = 0;
+// --- Gyro -> Camera ---
+let lastQuat = null;
+
+function deviceOrientationToQuat(alpha, beta, gamma) {
+  const euler = new THREE.Euler(
+    THREE.MathUtils.degToRad(beta - offsetBeta),
+    THREE.MathUtils.degToRad(alpha - offsetAlpha),
+    THREE.MathUtils.degToRad(-(gamma - offsetGamma)),
+    'YXZ'
+  );
+  return new THREE.Quaternion().setFromEuler(euler);
+}
 
 function updateCameraFromGyro() {
-  // Prefer AbsoluteOrientationSensor if available and has data
-  if (usingAbsoluteSensor && absQuat && absQuat.length === 4 && absQuat.every(q => q !== null)) {
-    // Use quaternion from AbsoluteOrientationSensor
+  if (usingAbsoluteSensor && absQuat?.length === 4 && absQuat.every(q => q !== null)) {
     camera.quaternion.set(absQuat[0], absQuat[1], absQuat[2], absQuat[3]);
-    camera.rotation.order = 'YXZ'; // for consistency if user inspects rotation
+    camera.rotation.order = 'YXZ';
     return;
   }
 
-  // Fallback: deviceorientation
   if (gyro.alpha == null || gyro.beta == null || gyro.gamma == null) return;
 
-  const pitch = THREE.MathUtils.degToRad(gyro.beta - 90); // look up/down (x axis)
-  let yawDeg = gyro.gamma; // in degrees
+  const currentQuat = deviceOrientationToQuat(gyro.alpha, gyro.beta, gyro.gamma);
 
-  // Prevent sudden flips in yaw (gamma)
-  if (lastValidYaw !== null) {
-    const diff = Math.abs(yawDeg - lastValidYaw);
-    if (diff > 10) { // 10 degrees threshold
-      yawDeg = lastValidYaw;
-    } else {
-      lastValidYaw = yawDeg;
-    }
-  } else {
-    lastValidYaw = yawDeg;
+  if (lastQuat === null) {
+    lastQuat = currentQuat.clone();
+    return;
   }
 
-  const yaw = THREE.MathUtils.degToRad(yawDeg);
+  // Delta quaternion: dQ = currentQuat * inverse(lastQuat)
+  const deltaQuat = currentQuat.clone().multiply(lastQuat.clone().invert());
 
-  camera.rotation.order = 'YXZ';
-  camera.rotation.x = pitch;
-  camera.rotation.y = yaw;
+  // Skip glitch frames — w near 1 means small rotation
+  if (Math.abs(deltaQuat.w) < 0.97) {
+    lastQuat = currentQuat.clone();
+    return;
+  }
+
+  // Apply in local space
+  camera.quaternion.multiply(deltaQuat);
+  lastQuat = currentQuat.clone();
 }
 
-// --- Device orientation listener ---
-window.addEventListener(
-  'deviceorientation',
-  (e) => {
-    if (e.alpha == null || e.beta == null || e.gamma == null) return;
-    gyro.alpha = e.alpha;
-    gyro.beta = e.beta;
-    gyro.gamma = e.gamma;
-    updateGyroUI();
-    if (isMobile) updateCameraFromGyro();
-  },
-  true,
-);
-
-// --- Webcam setup (mobile only) ---
+// --- Webcam ---
 let videoStream = null;
 const videoElement = document.getElementById('webcam');
 
@@ -316,18 +272,11 @@ async function initWebcam() {
   videoElement.setAttribute('webkit-playsinline', '');
   videoElement.setAttribute('muted', '');
   videoElement.setAttribute('disablepictureinpicture', '');
-  videoElement.setAttribute(
-    'controlsList',
-    'nodownload noplaybackrate nofullscreen',
-  );
+  videoElement.setAttribute('controlsList', 'nodownload noplaybackrate nofullscreen');
 
   try {
     const constraints = {
-      video: {
-        facingMode: 'environment',
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-      },
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false,
     };
     videoStream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -343,22 +292,12 @@ async function initWebcam() {
 let moveState = { forward: 0 };
 let touchStartY = 0;
 
-window.addEventListener(
-  'touchstart',
-  (e) => (touchStartY = e.touches[0].clientY),
-  { passive: true },
-);
-window.addEventListener(
-  'touchmove',
-  (e) => {
-    if (!isMobile) return;
-    moveState.forward = -(e.touches[0].clientY - touchStartY) * 0.001;
-  },
-  { passive: true },
-);
-window.addEventListener('touchend', () => (moveState.forward = 0), {
-  passive: true,
-});
+window.addEventListener('touchstart', (e) => (touchStartY = e.touches[0].clientY), { passive: true });
+window.addEventListener('touchmove', (e) => {
+  if (!isMobile) return;
+  moveState.forward = -(e.touches[0].clientY - touchStartY) * 0.001;
+}, { passive: true });
+window.addEventListener('touchend', () => (moveState.forward = 0), { passive: true });
 
 function updateCameraPosition() {
   if (Math.abs(moveState.forward) < 0.01) return;
@@ -367,38 +306,20 @@ function updateCameraPosition() {
   camera.position.addScaledVector(direction, moveState.forward * 0.1);
 }
 
-// --- Capture webcam image ---
+// --- Capture ---
 function captureCroppedWebcamImage() {
   if (!videoElement?.srcObject) return null;
-
   const videoWidth = videoElement.videoWidth || 640;
   const videoHeight = videoElement.videoHeight || 480;
-
-  // Calculate crop region (center 50% width & height → area = 25%)
   const cropWidth = videoWidth * 0.5;
   const cropHeight = videoHeight * 0.5;
   const cropX = (videoWidth - cropWidth) / 2;
   const cropY = (videoHeight - cropHeight) / 2;
-
-  // Offscreen canvas for cropping
   const canvas = document.createElement('canvas');
   canvas.width = cropWidth;
   canvas.height = cropHeight;
   const ctx = canvas.getContext('2d');
-
-  // Draw the cropped portion
-  ctx.drawImage(
-    videoElement,
-    cropX,
-    cropY,
-    cropWidth,
-    cropHeight, // source rect
-    0,
-    0,
-    cropWidth,
-    cropHeight, // destination rect
-  );
-
+  ctx.drawImage(videoElement, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
   return canvas.toDataURL('image/png');
 }
 
@@ -407,15 +328,14 @@ function captureWebcamImage() {
   const canvas = document.createElement('canvas');
   canvas.width = videoElement.videoWidth || 640;
   canvas.height = videoElement.videoHeight || 480;
-  canvas
-    .getContext('2d')
-    .drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+  canvas.getContext('2d').drawImage(videoElement, 0, 0, canvas.width, canvas.height);
   return canvas.toDataURL('image/png');
 }
 
-// --- Add plane in front of camera ---
+// --- Add plane ---
 const planes = [];
-// --- Add plane in front of camera (cropped center 25%) ---
+let calibrated = false;
+
 async function addPlaneWithTexture(imageData, cropPercent = 0.5) {
   if (!imageData) return;
 
@@ -431,24 +351,9 @@ async function addPlaneWithTexture(imageData, cropPercent = 0.5) {
     canvas.width = cropSize;
     canvas.height = cropSize;
     const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, cropX, cropY, cropSize, cropSize, 0, 0, cropSize, cropSize);
 
-    // Draw cropped image
-    ctx.drawImage(
-      img,
-      cropX,
-      cropY,
-      cropSize,
-      cropSize,
-      0,
-      0,
-      cropSize,
-      cropSize,
-    );
-
-    // Get location
     const { latitude, longitude } = await getDeviceLocation();
-
-    // Draw lat/lng text
     if (latitude != null && longitude != null) {
       ctx.fillStyle = 'white';
       ctx.font = `${Math.floor(cropSize / 12)}px sans-serif`;
@@ -457,7 +362,6 @@ async function addPlaneWithTexture(imageData, cropPercent = 0.5) {
       ctx.fillText(`${latitude}, ${longitude}`, cropSize - 5, cropSize - 5);
     }
 
-    // Create Three.js texture
     const texture = new THREE.Texture(canvas);
     texture.needsUpdate = true;
 
@@ -465,10 +369,12 @@ async function addPlaneWithTexture(imageData, cropPercent = 0.5) {
     const material = new THREE.MeshStandardMaterial({
       map: texture,
       side: THREE.DoubleSide,
-    });
+      opacity: calibrated ? 1.0 : 0.4,
+      transparent: true,
+      needsUpdate: true,
+    })
     const plane = new THREE.Mesh(geometry, material);
 
-    // Position plane in front of camera
     const cameraWorldPos = new THREE.Vector3();
     camera.getWorldPosition(cameraWorldPos);
     const direction = new THREE.Vector3();
@@ -480,10 +386,8 @@ async function addPlaneWithTexture(imageData, cropPercent = 0.5) {
 
     scene.add(plane);
     planes.push(plane);
+    currentPos = planeWorldPos.clone();
 
-    currentPos = planeWorldPos.clone(); // update UI
-
-    // Save to Firebase
     if (UPLOAD_TO_FIREBASE) {
       try {
         const dbRef = push(ref(database, 'captures'));
@@ -502,8 +406,9 @@ async function addPlaneWithTexture(imageData, cropPercent = 0.5) {
   };
 }
 
-// --- Capture button (mobile only) ---
+// --- Buttons (mobile) ---
 if (isMobile) {
+  // Capture button
   const captureBtn = document.createElement('button');
   captureBtn.innerHTML = '⬤';
   captureBtn.style.cssText = `
@@ -515,25 +420,50 @@ if (isMobile) {
     display: flex; align-items: center; justify-content: center; transition: all 0.1s ease;
   `;
   document.body.appendChild(captureBtn);
-
   captureBtn.addEventListener('touchend', () => {
     const imageData = captureCroppedWebcamImage();
     if (!imageData) return;
-
     addPlaneWithTexture(imageData);
-
     navigator.vibrate?.(100);
+  });
+
+  // Calibrate button
+  const calibrateBtn = document.createElement('button');
+  calibrateBtn.innerHTML = '⊕';
+  calibrateBtn.style.cssText = `
+    position: fixed; bottom: 30px; left: calc(50% + 90px);
+    z-index: 5; width: 60px; height: 60px; border-radius: 50%;
+    border: 3px solid #ff4444; background: rgba(255,50,50,0.35);
+    backdrop-filter: blur(10px); font-size: 28px; color: white;
+    cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    display: flex; align-items: center; justify-content: center;
+  `;
+  document.body.appendChild(calibrateBtn);
+  calibrateBtn.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    if (gyro.alpha == null) return;
+    offsetAlpha = gyro.alpha;
+    offsetBeta  = gyro.beta;
+    offsetGamma = gyro.gamma;
+    camera.quaternion.identity();
+    lastQuat = null;
+    navigator.vibrate?.(200);
+    calibrated = true;
+
+    // Update all existing palanes
+    for (const plane of planes) {
+        plane.material.transparent = true; // ensure it's set
+        plane.material.opacity = 1.0;
+        plane.material.needsUpdate = true; // tell Three.js material changed
+    }
   });
 }
 
 // --- Gyro UI ---
-// --- Gyro UI (updated to degrees) ---
 function updateGyroUI() {
-  // Convert camera rotation from radians to degrees
   const radToDeg = THREE.MathUtils.radToDeg;
   const camX = radToDeg(camera.rotation.x).toFixed(1);
   const camY = radToDeg(camera.rotation.y).toFixed(1);
-
   const camZ = radToDeg(camera.rotation.z).toFixed(1);
 
   let sensorStatus = '';
@@ -548,42 +478,33 @@ function updateGyroUI() {
     sensorStatus =
       `sensor: deviceorientation\n` +
       `alpha: ${gyro.alpha?.toFixed(1) ?? '—'}\n` +
-      `beta: ${gyro.beta?.toFixed(1) ?? '—'}\n` +
-      `gamma: ${gyro.gamma?.toFixed(1) ?? '—'}\n`;
-    // Add troubleshooting info if AbsoluteOrientationSensor is not working
+      `beta:  ${gyro.beta?.toFixed(1)  ?? '—'}\n` +
+      `gamma: ${gyro.gamma?.toFixed(1) ?? '—'}\n` +
+      `offset α: ${offsetAlpha.toFixed(1)}  β: ${offsetBeta.toFixed(1)}  γ: ${offsetGamma.toFixed(1)}\n`;
     if ('AbsoluteOrientationSensor' in window) {
-      sensorStatus +=
-        `\n[!] AbsoluteOrientationSensor available but not working.\n` +
-        `- Make sure Chrome flags 'Generic Sensor' and 'Generic Sensor Extra Classes' are enabled.\n` +
-        `- Try restarting your browser/device.\n` +
-        `- Check for OS/browser updates.\n`;
+      sensorStatus += `\n[!] AbsoluteOrientationSensor available but not working.\n`;
     } else {
-      sensorStatus +=
-        `\n[!] AbsoluteOrientationSensor not supported on this device/browser.\n`;
+      sensorStatus += `\n[!] AbsoluteOrientationSensor not supported on this device/browser.\n`;
     }
   }
+
   gyroDiv.textContent =
     `mobile: ${isMobile}\n` +
-    `permission (deviceorientation): ${gyro.permission}\n` +
+    `permission: ${gyro.permission}\n` +
     `camera rot x: ${camX}\n` +
     `camera rot y: ${camY}\n` +
     `camera rot z: ${camZ}\n` +
     sensorStatus +
     `posObject: ${
       currentPos
-        ? currentPos.x.toFixed(2) +
-          ', ' +
-          currentPos.y.toFixed(2) +
-          ', ' +
-          currentPos.z.toFixed(2)
+        ? `${currentPos.x.toFixed(2)}, ${currentPos.y.toFixed(2)}, ${currentPos.z.toFixed(2)}`
         : '—'
     }\n`;
 }
 
 // --- Animate ---
 function animate() {
-  renderer.setAnimationLoop(animate); // Required for XR
-
+  renderer.setAnimationLoop(animate);
   if (controls?.enabled) controls.update();
   if (isMobile) updateCameraPosition();
   updateGyroUI();
@@ -620,6 +541,7 @@ function ensureMotionOnGesture() {
   window.addEventListener('touchend', handler, { once: true });
 }
 
+// --- Load saved planes ---
 function loadSavedPlanes() {
   const capturesRef = ref(database, 'captures');
   console.log('📡 Listening for captures...');
@@ -633,7 +555,6 @@ function loadSavedPlanes() {
       return;
     }
 
-    // Clear existing planes
     for (const p of planes) scene.remove(p);
     planes.length = 0;
 
@@ -641,7 +562,6 @@ function loadSavedPlanes() {
       const { imageData, position, location } = capture;
       if (!imageData || !position) return;
 
-      // --- Create canvas to draw image + text ---
       const img = new Image();
       img.src = imageData;
       img.onload = () => {
@@ -650,11 +570,8 @@ function loadSavedPlanes() {
         canvas.width = cropSize;
         canvas.height = cropSize;
         const ctx = canvas.getContext('2d');
-
-        // Draw the image
         ctx.drawImage(img, 0, 0, cropSize, cropSize);
 
-        // Draw lat/lng text
         ctx.fillStyle = 'white';
         ctx.font = `${Math.floor(cropSize / 12)}px sans-serif`;
         ctx.textAlign = 'right';
@@ -667,7 +584,6 @@ function loadSavedPlanes() {
           );
         }
 
-        // Create Three.js texture
         const texture = new THREE.Texture(canvas);
         texture.needsUpdate = true;
 
@@ -675,10 +591,10 @@ function loadSavedPlanes() {
         const material = new THREE.MeshStandardMaterial({
           map: texture,
           side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.7,
         });
         const plane = new THREE.Mesh(geometry, material);
-
-        // Position plane
         plane.position.fromArray(position);
         plane.lookAt(0, 0, 0);
 
@@ -691,19 +607,13 @@ function loadSavedPlanes() {
   });
 }
 
-// --- Utility: Get device location ---
+// --- Geolocation ---
 async function getDeviceLocation(timeout = 5000) {
   if (!navigator.geolocation) return { latitude: null, longitude: null };
-
   try {
     return await new Promise((resolve) => {
       navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          resolve({
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-          });
-        },
+        (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
         (err) => {
           console.warn('⚠️ Geolocation error:', err);
           resolve({ latitude: null, longitude: null });
@@ -717,118 +627,74 @@ async function getDeviceLocation(timeout = 5000) {
   }
 }
 
+// --- Delete all ---
 function deleteAll() {
-  // --- Delete All Button ---
-  if (isMobile || true) {
-    // or show on desktop too
-    const deleteBtn = document.createElement('button');
-    deleteBtn.innerHTML = '🗑';
-    deleteBtn.style.cssText = `
+  const deleteBtn = document.createElement('button');
+  deleteBtn.innerHTML = '🗑';
+  deleteBtn.style.cssText = `
     position: fixed; bottom: 10px; left: 10%; transform: translateX(-50%);
     z-index: 5; width: fit-content; height: fit-content; padding: 10px; border-radius: 10px;
     border: 2px solid red; background: rgba(255,0,0,0.3);
     font-size: 16px; color: white; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
   `;
-    document.body.appendChild(deleteBtn);
-
-    deleteBtn.addEventListener('click', async () => {
-      const confirmDelete = confirm(
-        'Are you sure you want to delete ALL captures? This cannot be undone!',
-      );
-      if (!confirmDelete) return;
-
-      try {
-        await set(ref(database, 'captures'), null);
-        console.log('✅ All captures deleted from Firebase');
-        alert('All captures deleted.');
-        // remove planes from scene
-        for (const p of planes) scene.remove(p);
-        planes.length = 0;
-      } catch (err) {
-        console.error('❌ Failed to delete captures:', err);
-        alert('Failed to delete captures.');
-      }
-    });
-  }
+  document.body.appendChild(deleteBtn);
+  deleteBtn.addEventListener('click', async () => {
+    if (!confirm('Are you sure you want to delete ALL captures? This cannot be undone!')) return;
+    try {
+      await set(ref(database, 'captures'), null);
+      console.log('✅ All captures deleted from Firebase');
+      alert('All captures deleted.');
+      for (const p of planes) scene.remove(p);
+      planes.length = 0;
+    } catch (err) {
+      console.error('❌ Failed to delete captures:', err);
+      alert('Failed to delete captures.');
+    }
+  });
 }
 
 // --- MAP ---
-// --- MAP FILTER SYSTEM ---
-
-// Globals
 let map, markerStart, markerEnd, mapRectangle, latLngBounds;
 let mapCloseBtn;
 
-// Create Map Filter button
 const mapToggleBtn = document.createElement('button');
 mapToggleBtn.textContent = '🗺 Map Filter';
 mapToggleBtn.style.cssText = `
-  position: fixed;
-  top: 10px;
-  right: 10px;
-  z-index: 10;
-  padding: 10px 15px;
-  background: rgba(0, 0, 0, 0.6);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  font-family: sans-serif;
+  position: fixed; top: 10px; right: 10px; z-index: 10;
+  padding: 10px 15px; background: rgba(0,0,0,0.6); color: white;
+  border: none; border-radius: 8px; cursor: pointer; font-family: sans-serif;
 `;
 document.body.appendChild(mapToggleBtn);
 
-// Create map container
 const mapContainer = document.createElement('div');
 mapContainer.id = 'map';
 mapContainer.style.cssText = `
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 50%;
-  z-index: 9;
-  display: none;
-  border: 2px solid white;
+  position: fixed; top: 0; left: 0; width: 100%; height: 50%;
+  z-index: 9; display: none; border: 2px solid white;
 `;
 document.body.appendChild(mapContainer);
 
-// --- Toggle Map Display ---
 mapToggleBtn.onclick = () => {
   if (!map) initMap();
-
   const isVisible = mapContainer.style.display === 'block';
   if (isVisible) {
-    // Hide map and remove close button
     mapContainer.style.display = 'none';
-    if (mapCloseBtn) {
-      mapCloseBtn.remove();
-      mapCloseBtn = null;
-    }
+    if (mapCloseBtn) { mapCloseBtn.remove(); mapCloseBtn = null; }
   } else {
-    // Show map and add close button
     mapContainer.style.display = 'block';
     addCloseButton();
   }
 };
 
-// --- Add Close Button next to Filter ---
 function addCloseButton() {
-  if (mapCloseBtn) return; // already exists
+  if (mapCloseBtn) return;
   mapCloseBtn = document.createElement('button');
   mapCloseBtn.textContent = '✖ Close';
   mapCloseBtn.style.cssText = `
-    position: fixed;
-    top: 10px;
-    right: 130px;
-    z-index: 1000;
-    padding: 10px 15px;
-    background: rgba(0,0,0,0.6);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    font-family: sans-serif;
+    position: fixed; top: 10px; right: 130px; z-index: 1000;
+    padding: 10px 15px; background: rgba(0,0,0,0.6); color: white;
+    border: none; border-radius: 8px; cursor: pointer; font-family: sans-serif;
   `;
   mapCloseBtn.onclick = () => {
     mapContainer.style.display = 'none';
@@ -838,7 +704,6 @@ function addCloseButton() {
   document.body.appendChild(mapCloseBtn);
 }
 
-// --- Initialize the Leaflet Map ---
 function initMap() {
   map = L.map('map').setView([0, 0], 2);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -847,81 +712,42 @@ function initMap() {
 
   map.on('click', (e) => {
     const { lat, lng } = e.latlng;
-
-    // Reset markers if both exist
     if (markerStart && markerEnd) clearSelection();
-
-    // First click
     if (!markerStart) {
       markerStart = L.marker([lat, lng], { draggable: true }).addTo(map);
       markerStart.on('drag', updateRectangle);
-    }
-    // Second click
-    else if (!markerEnd) {
+    } else if (!markerEnd) {
       markerEnd = L.marker([lat, lng], { draggable: true }).addTo(map);
       markerEnd.on('drag', updateRectangle);
-
-      latLngBounds = L.latLngBounds(
-        markerStart.getLatLng(),
-        markerEnd.getLatLng(),
-      );
-      mapRectangle = L.rectangle(latLngBounds, {
-        color: 'blue',
-        weight: 2,
-      }).addTo(map);
-
-      showFilterInfobox(
-        latLngBounds,
-        () => {
-          filterPlanesByLocation(latLngBounds);
-          setResetMode();
-        },
-        clearSelection,
-      );
+      latLngBounds = L.latLngBounds(markerStart.getLatLng(), markerEnd.getLatLng());
+      mapRectangle = L.rectangle(latLngBounds, { color: 'blue', weight: 2 }).addTo(map);
+      showFilterInfobox(latLngBounds, () => { filterPlanesByLocation(latLngBounds); setResetMode(); }, clearSelection);
     }
   });
 }
 
-// --- Update rectangle as markers are dragged ---
 function updateRectangle() {
   if (markerStart && markerEnd) {
-    latLngBounds = L.latLngBounds(
-      markerStart.getLatLng(),
-      markerEnd.getLatLng(),
-    );
+    latLngBounds = L.latLngBounds(markerStart.getLatLng(), markerEnd.getLatLng());
     if (!mapRectangle) {
-      mapRectangle = L.rectangle(latLngBounds, {
-        color: 'blue',
-        weight: 2,
-      }).addTo(map);
+      mapRectangle = L.rectangle(latLngBounds, { color: 'blue', weight: 2 }).addTo(map);
     } else {
       mapRectangle.setBounds(latLngBounds);
     }
   }
 }
 
-// --- Show confirmation infobox ---
 function showFilterInfobox(bounds, onConfirm, onCancel) {
   const existingBox = document.getElementById('filter-infobox');
   if (existingBox) existingBox.remove();
-
   const box = document.createElement('div');
   box.id = 'filter-infobox';
   box.style.cssText = `
-    position: fixed;
-    top: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 20;
-    background: rgba(0, 0, 0, 0.85);
-    color: white;
-    padding: 15px 20px;
-    border-radius: 10px;
-    font-family: sans-serif;
-    text-align: center;
-    max-width: 320px;
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+    z-index: 20; background: rgba(0,0,0,0.85); color: white;
+    padding: 15px 20px; border-radius: 10px; font-family: sans-serif;
+    text-align: center; max-width: 320px;
   `;
-
   box.innerHTML = `
     <p>
       Filter images to this range?<br>
@@ -931,109 +757,64 @@ function showFilterInfobox(bounds, onConfirm, onCancel) {
     <button id="filter-confirm" style="margin:5px;padding:5px 10px;">Yes</button>
     <button id="filter-cancel" style="margin:5px;padding:5px 10px;">No</button>
   `;
-
   document.body.appendChild(box);
-
-  document.getElementById('filter-confirm').onclick = () => {
-    box.remove();
-    onConfirm?.();
-  };
-  document.getElementById('filter-cancel').onclick = () => {
-    box.remove();
-    onCancel?.();
-  };
+  document.getElementById('filter-confirm').onclick = () => { box.remove(); onConfirm?.(); };
+  document.getElementById('filter-cancel').onclick = () => { box.remove(); onCancel?.(); };
 }
 
-// --- Clear rectangle + markers ---
 function clearSelection() {
-  if (mapRectangle) {
-    map.removeLayer(mapRectangle);
-    mapRectangle = null;
-  }
-  if (markerStart) {
-    map.removeLayer(markerStart);
-    markerStart = null;
-  }
-  if (markerEnd) {
-    map.removeLayer(markerEnd);
-    markerEnd = null;
-  }
+  if (mapRectangle) { map.removeLayer(mapRectangle); mapRectangle = null; }
+  if (markerStart) { map.removeLayer(markerStart); markerStart = null; }
+  if (markerEnd) { map.removeLayer(markerEnd); markerEnd = null; }
   latLngBounds = null;
 }
 
-// --- Switch Map button to Reset mode ---
 function setResetMode() {
   mapToggleBtn.textContent = 'Reset Filter';
   mapToggleBtn.onclick = () => {
     clearSelection();
-    loadSavedPlanes(); // reload all images
+    loadSavedPlanes();
     mapToggleBtn.textContent = '🗺 Map Filter';
     mapToggleBtn.onclick = () => {
-      mapContainer.style.display =
-        mapContainer.style.display === 'none' ? 'block' : 'none';
+      mapContainer.style.display = mapContainer.style.display === 'none' ? 'block' : 'none';
     };
   };
 }
 
-// --- Filter Firebase planes by selected area ---
 async function filterPlanesByLocation(bounds) {
   if (!bounds) return;
-
-  // Remove existing planes
   for (const p of planes) scene.remove(p);
   planes.length = 0;
-
   const snapshot = await get(ref(database, 'captures'));
   const data = snapshot.val();
   if (!data) return;
-
   Object.values(data).forEach((capture) => {
     const { location, imageData } = capture;
     if (!location || !imageData) return;
-
     const point = L.latLng(location.latitude, location.longitude);
-    if (bounds.contains(point)) {
-      addPlaneWithTexture(imageData);
-    }
+    if (bounds.contains(point)) addPlaneWithTexture(imageData);
   });
 }
 
-// --- DELETE ALL DATA ON FIREBASE
-// --- BUTTONS --- //
+// --- Delete All button ---
 const btnStyle = `
-  position: fixed;
-  bottom: 10px;
-  left: 10px;
-  z-index: 1000;
-  padding: 10px;
-  background: rgba(0,0,0,0.6);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  font-family: sans-serif;
+  position: fixed; bottom: 10px; left: 10px; z-index: 1000; padding: 10px;
+  background: rgba(0,0,0,0.6); color: white; border: none; border-radius: 8px;
+  cursor: pointer; font-family: sans-serif;
 `;
-
-// 🗑 Delete All (Firebase)
 const deleteAllBtn = document.createElement('button');
 deleteAllBtn.textContent = '🗑';
-deleteAllBtn.style.cssText = `${btnStyle}`;
-deleteAllBtn.onclick = () => {
-  if (confirm('Delete all captures from Firebase?')) {
-    deleteAll();
-  }
-};
-// document.body.appendChild(deleteAllBtn); // uncomment this to add trash delete button
+deleteAllBtn.style.cssText = btnStyle;
+deleteAllBtn.onclick = () => { if (confirm('Delete all captures from Firebase?')) deleteAll(); };
+// document.body.appendChild(deleteAllBtn);
 
-// --- Initialize everything ---
+// --- Init ---
 (async () => {
   await requestMotionPermission();
   ensureMotionOnGesture();
   await setupControls();
-  await initWebcam(); // mobile only
+  await initWebcam();
   loadSavedPlanes();
   initMap();
-  // deleteAll();
-
   animate();
 })();
