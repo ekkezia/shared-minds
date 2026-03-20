@@ -84,7 +84,74 @@ function updateCameraRotation() {
 }
 
 // --- Device detection & gyro ---
+
 const gyro = { alpha: null, beta: null, gamma: null, permission: 'unknown' };
+let absSensor = null;
+let absQuat = [null, null, null, null];
+let absEuler = { x: null, y: null, z: null };
+let usingAbsoluteSensor = false;
+
+function quaternionToEuler(q) {
+  // q: [x, y, z, w]
+  let x = q[0], y = q[1], z = q[2], w = q[3];
+  const ysqr = y * y;
+  const t0 = +2.0 * (w * x + y * z);
+  const t1 = +1.0 - 2.0 * (x * x + ysqr);
+  const X = Math.atan2(t0, t1);
+  let t2 = +2.0 * (w * y - z * x);
+  t2 = t2 > 1 ? 1 : t2;
+  t2 = t2 < -1 ? -1 : t2;
+  const Y = Math.asin(t2);
+  const t3 = +2.0 * (w * z + x * y);
+  const t4 = +1.0 - 2.0 * (ysqr + z * z);
+  const Z = Math.atan2(t3, t4);
+  return { x: X * 180 / Math.PI, y: Y * 180 / Math.PI, z: Z * 180 / Math.PI };
+}
+
+function startSensors() {
+  if ('AbsoluteOrientationSensor' in window) {
+    try {
+      absSensor = new AbsoluteOrientationSensor({ frequency: 60 });
+      absSensor.addEventListener('reading', () => {
+        absQuat = Array.from(absSensor.quaternion);
+        absEuler = quaternionToEuler(absQuat);
+        usingAbsoluteSensor = true;
+        updateGyroUI();
+      });
+      absSensor.addEventListener('error', (event) => {
+        console.warn('AbsoluteOrientationSensor error:', event.error);
+        usingAbsoluteSensor = false;
+      });
+      absSensor.start();
+      usingAbsoluteSensor = true;
+      return;
+    } catch (e) {
+      console.warn('AbsoluteOrientationSensor not available:', e);
+    }
+  }
+  // Fallback to deviceorientation
+  window.addEventListener(
+    'deviceorientation',
+    (e) => {
+      if (e.alpha == null || e.beta == null || e.gamma == null) return;
+      gyro.alpha = e.alpha;
+      gyro.beta = e.beta;
+      gyro.gamma = e.gamma;
+      usingAbsoluteSensor = false;
+      updateGyroUI();
+      if (isMobile) updateCameraFromGyro();
+    },
+    true,
+  );
+}
+
+// Start sensors on load or user gesture
+if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+  window.addEventListener('click', () => startSensors(), { once: true });
+  window.addEventListener('touchend', () => startSensors(), { once: true });
+} else {
+  startSensors();
+}
 
 const isMobile = (() => {
   const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
@@ -114,6 +181,8 @@ const gyroDiv =
     el.style.fontSize = '12px';
     el.style.whiteSpace = 'pre';
     el.style.display = 'block';
+    el.style.width = '100vw';
+    el.style.boxSizing = 'border-box';
     document.body.appendChild(el);
     return el;
   })();
@@ -185,36 +254,40 @@ async function setupControls() {
 // --- Gyro -> Camera Rig ---
 let lastAlpha = null;
 let accumulatedYaw = 0;
-let lastValidGamma = 0;
+let lastValidYaw = 0;
 
 function updateCameraFromGyro() {
-  if (gyro.alpha == null || gyro.beta == null || gyro.gamma == null) return;
-
-  // const beta = THREE.MathUtils.degToRad(gyro.beta, -90, 90);
-  let gamma = gyro.gamma;
-
-  const pitch = THREE.MathUtils.degToRad(gyro.beta - 90); // look up down (x axis on three js), 90 (up) to -90 (down)
-  let clampedRoll = Math.max(-90, Math.min(90, gyro.gamma));
-  const roll = THREE.MathUtils.degToRad(clampedRoll); // rotate your left/right (x axis on three js )
-  // const yaw = THREE.MathUtils.degToRad(gyro.alpha); //mobile: tilt your phone left/right (y axis on three js) // [unused]
-  // const pitch = THREE.MathUtils.degToRad(gyro.beta - 90); // look up down (z axis on three js)
-  // Clamp to -90 → 90
-  if (gamma > 90) gamma = 90;
-  if (gamma < -90) gamma = -90;
-
-  // Prevent sudden jumps: ignore changes > 30° between frames
-  const delta = gamma - lastValidGamma;
-  if (Math.abs(delta) > 10) {
-    gamma = lastValidGamma; // keep previous stable value
+  // Prefer AbsoluteOrientationSensor if available and has data
+  if (usingAbsoluteSensor && absQuat && absQuat.length === 4 && absQuat.every(q => q !== null)) {
+    // Use quaternion from AbsoluteOrientationSensor
+    camera.quaternion.set(absQuat[0], absQuat[1], absQuat[2], absQuat[3]);
+    camera.rotation.order = 'YXZ'; // for consistency if user inspects rotation
+    return;
   }
 
-  lastValidGamma = gamma;
+  // Fallback: deviceorientation
+  if (gyro.alpha == null || gyro.beta == null || gyro.gamma == null) return;
 
-  // const yaw = THREE.MathUtils.degToRad(accumulatedYaw);
+  const pitch = THREE.MathUtils.degToRad(gyro.beta - 90); // look up/down (x axis)
+  let yawDeg = gyro.gamma; // in degrees
+
+  // Prevent sudden flips in yaw (gamma)
+  if (lastValidYaw !== null) {
+    const diff = Math.abs(yawDeg - lastValidYaw);
+    if (diff > 10) { // 10 degrees threshold
+      yawDeg = lastValidYaw;
+    } else {
+      lastValidYaw = yawDeg;
+    }
+  } else {
+    lastValidYaw = yawDeg;
+  }
+
+  const yaw = THREE.MathUtils.degToRad(yawDeg);
 
   camera.rotation.order = 'YXZ';
   camera.rotation.x = pitch;
-  camera.rotation.y = THREE.MathUtils.degToRad(gamma);
+  camera.rotation.y = yaw;
 }
 
 // --- Device orientation listener ---
@@ -463,13 +536,39 @@ function updateGyroUI() {
 
   const camZ = radToDeg(camera.rotation.z).toFixed(1);
 
+  let sensorStatus = '';
+  if (usingAbsoluteSensor) {
+    sensorStatus =
+      `sensor: AbsoluteOrientationSensor\n` +
+      `sensor x: ${absEuler.x !== null ? absEuler.x.toFixed(1) : '—'}\n` +
+      `sensor y: ${absEuler.y !== null ? absEuler.y.toFixed(1) : '—'}\n` +
+      `sensor z: ${absEuler.z !== null ? absEuler.z.toFixed(1) : '—'}\n` +
+      `absQuat: ${absQuat.map(q => q !== null ? q.toFixed(3) : '—').join(', ')}\n`;
+  } else {
+    sensorStatus =
+      `sensor: deviceorientation\n` +
+      `alpha: ${gyro.alpha?.toFixed(1) ?? '—'}\n` +
+      `beta: ${gyro.beta?.toFixed(1) ?? '—'}\n` +
+      `gamma: ${gyro.gamma?.toFixed(1) ?? '—'}\n`;
+    // Add troubleshooting info if AbsoluteOrientationSensor is not working
+    if ('AbsoluteOrientationSensor' in window) {
+      sensorStatus +=
+        `\n[!] AbsoluteOrientationSensor available but not working.\n` +
+        `- Make sure Chrome flags 'Generic Sensor' and 'Generic Sensor Extra Classes' are enabled.\n` +
+        `- Try restarting your browser/device.\n` +
+        `- Check for OS/browser updates.\n`;
+    } else {
+      sensorStatus +=
+        `\n[!] AbsoluteOrientationSensor not supported on this device/browser.\n`;
+    }
+  }
   gyroDiv.textContent =
     `mobile: ${isMobile}\n` +
-    `permission: ${gyro.permission}\n` +
-    `alpha(z): ${gyro.alpha?.toFixed(1) ?? '—'}\n` +
-    `beta(x): ${gyro.beta?.toFixed(1) ?? '—'}\n` +
-    `gamma(y): ${gyro.gamma?.toFixed(1) ?? '—'}\n` +
-    `cam(x,y,z): ${camX}, ${camY}, ${camZ}\n` +
+    `permission (deviceorientation): ${gyro.permission}\n` +
+    `camera rot x: ${camX}\n` +
+    `camera rot y: ${camY}\n` +
+    `camera rot z: ${camZ}\n` +
+    sensorStatus +
     `posObject: ${
       currentPos
         ? currentPos.x.toFixed(2) +
